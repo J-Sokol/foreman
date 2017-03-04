@@ -133,6 +133,12 @@ class ProvisioningTemplateTest < ActiveSupport::TestCase
     provisioning_template.preview_host_collection
   end
 
+  test 'saving removes carriage returns' do
+    template = FactoryGirl.build(:provisioning_template, template: "a\r\nb\r\nc\n")
+    template.save!
+    assert_equal "a\nb\nc\n", template.template
+  end
+
   describe "Association cascading" do
     setup do
       @os1 = FactoryGirl.create(:operatingsystem)
@@ -213,6 +219,20 @@ class ProvisioningTemplateTest < ActiveSupport::TestCase
     test "should call build_pxe_default with allowed_helpers containing the default helpers" do
       TemplatesController.any_instance.expects(:render_safe).with(anything, includes(*Foreman::Renderer::ALLOWED_GENERIC_HELPERS), anything).returns(true)
       ProvisioningTemplate.build_pxe_default(TemplatesController.new)
+    end
+
+    test "#metadata should include OSes and kind" do
+      template = FactoryGirl.build(:provisioning_template, :operatingsystems => [
+        FactoryGirl.create(:operatingsystem, :name => 'CentOS'),
+        FactoryGirl.create(:operatingsystem, :name => 'CentOS'),
+        FactoryGirl.create(:operatingsystem, :name => 'Fedora')])
+
+      lines = template.metadata.split("\n")
+      assert_includes lines, '- CentOS'
+      assert_includes lines, '- Fedora'
+      assert_equal 1, lines.select { |l| l == '- CentOS' }.size
+      assert_includes lines, "kind: #{template.template_kind.name}"
+      assert_includes lines, "name: #{template.name}"
     end
   end
 end

@@ -50,11 +50,6 @@ module ApplicationHelper
     render :partial => 'common/show_habtm', :collection => associations, :as => :association
   end
 
-  def edit_habtm(klass, association, prefix = nil, options = {})
-    render :partial => 'common/edit_habtm', :locals =>{:prefix => prefix, :klass => klass, :options => options,
-                                                       :associations => association.all.sort.delete_if{|e| e == klass}}
-  end
-
   def link_to_remove_puppetclass(klass, type)
     options = options_for_puppetclass_selection(klass, type)
     text = remove_link_to_function(truncate(klass.name, :length => 28), options)
@@ -133,8 +128,9 @@ module ApplicationHelper
 
   def display_delete_if_authorized(options = {}, html_options = {})
     text = options.delete(:text) || _("Delete")
+    method = options.delete(:method) || :delete
     options = {:auth_action => :destroy}.merge(options)
-    html_options = { :data => { :confirm => _('Are you sure?') }, :method => :delete, :class => 'delete' }.merge(html_options)
+    html_options = { :data => { :confirm => _('Are you sure?') }, :method => method }.merge(html_options)
     display_link_if_authorized(text, options, html_options)
   end
 
@@ -154,13 +150,6 @@ module ApplicationHelper
     options[:action] = :new
     html_options[:class] = "btn btn-primary #{html_options[:class]}"
     display_link_if_authorized(name, options, html_options)
-  end
-
-  def authorized_edit_habtm(klass, association, prefix = nil, options = {})
-    if authorized_for :controller => params[:controller], :action => params[:action]
-      return edit_habtm(klass, association, prefix, options)
-    end
-    show_habtm klass.send(association.name.pluralize.downcase)
   end
 
   # renders a style=display based on an attribute properties
@@ -187,7 +176,7 @@ module ApplicationHelper
   end
 
   def searchable?
-    return false if (SETTINGS[:login] && !User.current) || @welcome
+    return false if (SETTINGS[:login] && !User.current) || @welcome || @missing_permissions
     if (controller.action_name == "index") || (defined?(SEARCHABLE_ACTIONS) && (SEARCHABLE_ACTIONS.include?(controller.action_name)))
       controller.respond_to?(:auto_complete_search)
     end
@@ -202,6 +191,11 @@ module ApplicationHelper
     path ||= (options[:path] || send("#{auto_complete_controller_name}_path")) + "/auto_complete_#{name}"
     options.merge!(:class => "autocomplete-input form-control", :'data-url' => path)
     text_field_tag(name, val, options)
+  end
+
+  def sort(field, permitted: [], **kwargs)
+    kwargs[:url_options] ||= params.permit(permitted + [:locale, :search])
+    super(field, kwargs)
   end
 
   def help_button
@@ -373,13 +367,19 @@ module ApplicationHelper
 
   def documentation_button(section = "", options = {})
     url = documentation_url section, options
-    link_to(icon_text('help', _('Documentation'), :class => 'icon-white', :kind => 'pficon'),
-      url, :rel => 'external', :class => 'btn btn-info btn-docs', :target => '_blank')
+    link_to(icon_text('help', _('Documentation'), :kind => 'pficon'),
+      url, :rel => 'external', :class => 'btn btn-default btn-docs', :target => '_blank')
   end
 
   def generate_links_for(sub_model)
     return _("None found") if sub_model.to_a.empty?
     sub_model.map {|model| link_to(model.to_label, { :controller => model.class.model_name.plural.downcase, :action => :index, :search => "name = \"#{model.name}\"" })}.to_sentence
+  end
+
+  def cancel_path_with_index_search
+    prev_controller_url = session["redirect_to_url_#{controller_name}"].to_s
+    return nil unless prev_controller_url.include?('search')
+    prev_controller_url
   end
 
   private
@@ -433,7 +433,13 @@ module ApplicationHelper
   end
 
   def hosts_count(resource_name = controller.resource_name)
-    @hosts_count ||= Host::Managed.reorder('').authorized.group("#{resource_name}_id").count
+    # If we are on /organizations or /locations, this allows to display the
+    # count for hosts not in the current organization & location.
+    hosts_scope = Host::Managed.reorder('')
+    if ['organization', 'location'].include? resource_name
+      hosts_scope = hosts_scope.unscoped
+    end
+    @hosts_count ||= hosts_scope.authorized.group("#{resource_name}_id").count
   end
 
   def webpack_dev_server
@@ -447,10 +453,10 @@ module ApplicationHelper
     klass.authorized.reorder(order)
   end
 
-  def accessible_resource(obj, resource, order = :name)
+  def accessible_resource(obj, resource, order = :name, association: resource)
     list = accessible_resource_records(resource, order).to_a
     # we need to allow the current value even if it was filtered
-    current = obj.public_send(resource) if obj.respond_to?(resource)
+    current = obj.public_send(association) if obj.respond_to?(association)
     list |= [current] if current.present?
     list
   end

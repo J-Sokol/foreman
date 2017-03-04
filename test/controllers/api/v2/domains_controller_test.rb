@@ -26,9 +26,21 @@ class Api::V2::DomainsControllerTest < ActionController::TestCase
     assert_response :unprocessable_entity
   end
 
+  test "should not create invalid dns_id" do
+    # Currently Rails 4.2 does not support foreign key constraint with sqlite3
+    # (See https://github.com/rails/rails/pull/22236)
+    # Skipping this test until resolved
+    skip if ActiveRecord::Base.connection_config[:adapter].eql?"sqlite3"
+    invalid_proxy_id = SmartProxy.last.id + 100
+    post :create, { :domain => { :name => "doma.in", :dns_id => invalid_proxy_id } }
+    show_response = ActiveSupport::JSON.decode(@response.body)
+    assert_includes(show_response["error"]["full_messages"], "Dns Invalid smart-proxy id")
+    assert_response :unprocessable_entity
+  end
+
   test "should update valid domain" do
     put :update, { :id => Domain.first.to_param, :domain => { :name => "domain.new" } }
-    assert_equal "domain.new", Domain.first.name
+    assert_equal "domain.new", Domain.unscoped.first.name
     assert_response :success
   end
 
@@ -57,15 +69,15 @@ class Api::V2::DomainsControllerTest < ActionController::TestCase
   test "should get domains for location only" do
     get :index, {:location_id => taxonomies(:location1).id }
     assert_response :success
-    assert_equal 2, assigns(:domains).length
-    assert_equal assigns(:domains), [domains(:mydomain), domains(:yourdomain)]
+    assert_equal taxonomies(:location1).domains.length, assigns(:domains).length
+    assert_equal assigns(:domains), taxonomies(:location1).domains
   end
 
   test "should get domains for organization only" do
     get :index, {:organization_id => taxonomies(:organization1).id }
     assert_response :success
-    assert_equal 1, assigns(:domains).length
-    assert_equal assigns(:domains), [domains(:mydomain)]
+    assert_equal taxonomies(:organization1).domains.length, assigns(:domains).length
+    assert_equal taxonomies(:organization1).domains, assigns(:domains)
   end
 
   test "should get domains for both location and organization" do
@@ -100,5 +112,42 @@ class Api::V2::DomainsControllerTest < ActionController::TestCase
     domain_with_parameter = FactoryGirl.create(:domain, :with_parameter)
     get :show, {:id => domain_with_parameter.to_param, :format => 'json'}
     assert_not_empty JSON.parse(response.body)['parameters']
+  end
+
+  context 'hidden parameters' do
+    test "should show a domain parameter as hidden unless show_hidden_parameters is true" do
+      domain = FactoryGirl.create(:domain)
+      domain.domain_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => domain.id }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal '*****', show_response['parameters'].first['value']
+    end
+
+    test "should show a domain parameter as unhidden when show_hidden_parameters is true" do
+      domain = FactoryGirl.create(:domain)
+      domain.domain_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => domain.id, :show_hidden_parameters => 'true' }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal 'bar', show_response['parameters'].first['value']
+    end
+  end
+
+  test "should update existing domain parameters" do
+    domain = FactoryGirl.create(:domain)
+    param_params = { :name => "foo", :value => "bar" }
+    domain.domain_parameters.create!(param_params)
+    put :update, { :id => domain.id, :domain => { :domain_parameters_attributes => [{ :name => param_params[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert param_params[:name], domain.parameters.first.name
+  end
+
+  test "should delete existing domain parameters" do
+    domain = FactoryGirl.create(:domain)
+    param_1 = { :name => "foo", :value => "bar" }
+    param_2 = { :name => "boo", :value => "test" }
+    domain.domain_parameters.create!([param_1, param_2])
+    put :update, { :id => domain.id, :domain => { :domain_parameters_attributes => [{ :name => param_1[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert_equal 1, domain.parameters.count
   end
 end

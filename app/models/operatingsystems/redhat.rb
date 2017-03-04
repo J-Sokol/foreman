@@ -1,10 +1,6 @@
 class Redhat < Operatingsystem
   PXEFILES = {:kernel => "vmlinuz", :initrd => "initrd.img"}
 
-  class << self
-    delegate :model_name, :to => :superclass
-  end
-
   # outputs kickstart installation medium based on the medium type (NFS or URL)
   # it also convert the $arch string to the current host architecture
   def mediumpath(host)
@@ -20,7 +16,6 @@ class Redhat < Operatingsystem
     end
   end
 
-  # Redhat supports all PXE loaders
   def available_loaders
     self.class.all_loaders
   end
@@ -44,7 +39,7 @@ class Redhat < Operatingsystem
 
   def self.shorten_description(description)
     return "" if description.blank?
-    s=description
+    s = description.dup
     s.gsub!('Red Hat Enterprise Linux','RHEL')
     s.gsub!('release','')
     s.gsub!(/\(.+?\)/,'')

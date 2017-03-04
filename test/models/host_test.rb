@@ -98,7 +98,7 @@ class HostTest < ActiveSupport::TestCase
 
   test "sets compute attributes on create" do
     Host.any_instance.expects(:set_compute_attributes).once.returns(true)
-    Host.create! :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.3.4.3",
+    Host.create! :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3",
       :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :medium => media(:one),
       :subnet => subnets(:two), :architecture => architectures(:x86_64), :puppet_proxy => smart_proxies(:puppetmaster),
       :environment => environments(:production), :disk => "empty partition"
@@ -164,7 +164,7 @@ class HostTest < ActiveSupport::TestCase
   end
 
   test "should be able to save host" do
-    host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.3.4.3",
+    host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3",
       :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :medium => media(:one),
       :subnet => subnets(:two), :architecture => architectures(:x86_64), :puppet_proxy => smart_proxies(:puppetmaster),
       :environment => environments(:production), :disk => "empty partition"
@@ -175,10 +175,12 @@ class HostTest < ActiveSupport::TestCase
   test "non-admin user should be able to create host with new lookup value" do
     User.current = users(:one)
     User.current.roles << [roles(:manager)]
-    assert_difference('LookupValue.count') do
-      assert Host.create! :name => "abc.mydomain.net", :mac => "aabbecddeeff", :ip => "2.3.4.3",
+    assert_difference('LookupValue.unscoped.count') do
+      assert Host.create! :name => "abc.mydomain.net", :mac => "aabbecddeeff", :ip => "3.3.4.3",
       :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat),
-      :subnet => subnets(:two), :architecture => architectures(:x86_64), :puppet_proxy => smart_proxies(:puppetmaster), :medium => media(:one),
+      :subnet => subnets(:two), :architecture => architectures(:x86_64),
+      :puppet_proxy => smart_proxies(:puppetmaster), :medium => media(:one),
+      :organization => nil, :location => nil,
       :environment => environments(:production), :disk => "empty partition",
       :lookup_values_attributes => {"new_123456" => {"lookup_key_id" => lookup_keys(:complex).id, "value"=>"some_value", "match" => "fqdn=abc.mydomain.net"}}
     end
@@ -186,7 +188,7 @@ class HostTest < ActiveSupport::TestCase
 
   test "lookup value has right matcher for a host" do
     assert_difference('LookupValue.where(:lookup_key_id => lookup_keys(:five).id, :match => "fqdn=abc.mydomain.net").count') do
-      Host.create! :name => "abc", :mac => "aabbecddeeff", :ip => "2.3.4.3",
+      Host.create! :name => "abc", :mac => "aabbecddeeff", :ip => "3.3.4.3",
         :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :medium => media(:one),
         :subnet => subnets(:two), :architecture => architectures(:x86_64), :puppet_proxy => smart_proxies(:puppetmaster),
         :environment => environments(:production), :disk => "empty partition",
@@ -323,6 +325,38 @@ class HostTest < ActiveSupport::TestCase
       assert Host.find_by_name('sinn1636.lan')
     end
 
+    test 'domain updated from facts' do
+      host = FactoryGirl.create(:host, :with_operatingsystem)
+      FactoryGirl.create(:domain, :name => 'foo.bar')
+      assert host.import_facts(:domain => 'foo.bar', :lsbdistrelease => host.operatingsystem.release, :operatingsystem => host.operatingsystem.name)
+      assert_equal 'foo.bar', host.domain.to_s
+    end
+
+    test 'domain not updated from facts when ignore_facts_for_domain false' do
+      domain = FactoryGirl.create(:domain)
+      host = FactoryGirl.create(:host, :managed, :domain => domain)
+      FactoryGirl.create(:domain, :name => 'foo.bar')
+      assert host.import_facts(:domain => domain.name, :lsbdistrelease => host.operatingsystem.release, :operatingsystem => host.operatingsystem.name)
+      Setting[:ignore_facts_for_domain] = true
+      assert host.import_facts(:domain => 'foo.bar', :lsbdistrelease => host.operatingsystem.release, :operatingsystem => host.operatingsystem.name)
+      assert_equal domain.name, host.domain.name
+      Setting[:ignore_facts_for_domain] =
+        Setting.find_by_name('ignore_facts_for_domain').default
+    end
+
+    test 'host is created when updating domain from facts is disabled' do
+      assert_difference 'Host.count' do
+        Setting[:ignore_facts_for_domain] = true
+        raw = read_json_fixture('facts/facts_with_certname.json')
+        host = Host.import_host(raw['name'], 'puppet', raw['certname'])
+        assert host.import_facts(raw['facts'])
+        assert Host.find_by_name('sinn1636.lan')
+        assert host.domain
+        Setting[:ignore_facts_for_domain] =
+          Setting.find_by_name('ignore_facts_for_domain').default
+      end
+    end
+
     test 'should downcase hostname parameter from json of a new host' do
       raw = read_json_fixture('facts/facts_with_caps.json')
       host = Host.import_host(raw['name'], 'puppet')
@@ -392,6 +426,15 @@ class HostTest < ActiveSupport::TestCase
       assert_nil host
     end
 
+    test 'host is updated when uploading facts if setting is false' do
+      Host.new(:name => 'sinn1636.lan', :certname => 'sinn1636.cert.fail').save(:validate => false)
+      Setting[:create_new_host_when_facts_are_uploaded] = false
+      refute Setting[:create_new_host_when_facts_are_uploaded]
+      raw = read_json_fixture('facts/facts_with_certname.json')
+      host = Host.import_host(raw['name'], 'puppet', raw['certname'])
+      assert host.import_facts(raw['facts'])
+    end
+
     test 'host taxonomies are set to a default when uploading facts' do
       Setting[:create_new_host_when_facts_are_uploaded] = true
       raw = read_json_fixture('facts/facts.json')
@@ -442,6 +485,35 @@ class HostTest < ActiveSupport::TestCase
       Host.find_by_name('sinn1636.lan').import_facts(raw['facts'])
 
       assert_equal taxonomies(:location2), Host.find_by_name('sinn1636.lan').location
+    end
+
+    test 'operatingsystem updated from facts' do
+      host = Host.import_host('host', 'puppet')
+      assert host.import_facts(:lsbdistrelease => '6.7', :operatingsystem => 'CentOS')
+      assert_equal 'CentOS 6.7', host.operatingsystem.to_s
+    end
+
+    test 'operatingsystem not updated from facts when ignore_facts_for_operatingsystem false' do
+      host = Host.import_host('host', 'puppet')
+      assert host.import_facts(:lsbdistrelease => '6.7', :operatingsystem => 'CentOS')
+      Setting[:ignore_facts_for_operatingsystem] = true
+      assert host.import_facts(:lsbdistrelease => '6.8', :operatingsystem => 'CentOS')
+      assert_equal 'CentOS 6.7', host.operatingsystem.to_s
+      Setting[:ignore_facts_for_operatingsystem] =
+        Setting.find_by_name('ignore_facts_for_operatingsystem').default
+    end
+
+    test 'host is created when updating operatingsystem from facts is disabled' do
+      assert_difference 'Host.count' do
+        Setting[:ignore_facts_for_operatingsystem] = true
+        raw = read_json_fixture('facts/facts_with_certname.json')
+        host = Host.import_host(raw['name'], 'puppet', raw['certname'])
+        assert host.import_facts(raw['facts'])
+        assert Host.find_by_name('sinn1636.lan')
+        assert host.operatingsystem
+        Setting[:ignore_facts_for_operatingsystem] =
+          Setting.find_by_name('ignore_facts_for_operatingsystem').default
+      end
     end
   end
 
@@ -585,6 +657,7 @@ class HostTest < ActiveSupport::TestCase
     org2 = FactoryGirl.create(:organization)
     org3 = FactoryGirl.create(:organization)
     user = FactoryGirl.create(:user, :organizations => [org1, org2])
+    users(:one).organizations << [org1, org2, org3]
     host1 = FactoryGirl.create(:host, :organization => org1)
     host2 = FactoryGirl.create(:host, :organization => org2)
     host3 = FactoryGirl.create(:host, :organization => org3)
@@ -667,7 +740,7 @@ class HostTest < ActiveSupport::TestCase
 
     test "should not save if neither ptable or disk are defined when the host is managed" do
       if unattended?
-        host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.4.4.03",
+        host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3",
           :domain => domains(:mydomain), :operatingsystem => Operatingsystem.first, :subnet => subnets(:two), :medium => media(:one),
           :architecture => Architecture.first, :environment => Environment.first, :managed => true
         refute_valid host
@@ -675,21 +748,21 @@ class HostTest < ActiveSupport::TestCase
     end
 
     test "should save if neither ptable or disk are defined when the host is not managed" do
-      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.3.4.03", :medium => media(:one),
+      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3", :medium => media(:one),
         :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :subnet => subnets(:two), :puppet_proxy => smart_proxies(:puppetmaster),
         :architecture => architectures(:x86_64), :environment => environments(:production), :managed => false
       assert host.valid?
     end
 
     test "should save if ptable is defined" do
-      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.3.4.03",
+      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3",
         :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :puppet_proxy => smart_proxies(:puppetmaster), :medium => media(:one),
         :subnet => subnets(:two), :architecture => architectures(:x86_64), :environment => environments(:production), :ptable => Ptable.first
       assert !host.new_record?
     end
 
     test "should save if disk is defined" do
-      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "2.3.4.03",
+      host = Host.create :name => "myfullhost", :mac => "aabbecddeeff", :ip => "3.3.4.3",
         :domain => domains(:mydomain), :operatingsystem => operatingsystems(:redhat), :subnet => subnets(:two), :medium => media(:one),
         :architecture => architectures(:x86_64), :environment => environments(:production), :disk => "aaa", :puppet_proxy => smart_proxies(:puppetmaster)
       assert !host.new_record?
@@ -858,59 +931,6 @@ class HostTest < ActiveSupport::TestCase
         :architecture => architectures(:x86_64), :environment => environments(:production), :disk => "aaa"
       host.valid?
       assert_equal domain, host.domain
-    end
-
-    context 'associated config templates' do
-      setup do
-        @host = Host.create(:name => "host.mydomain.net", :mac => "aabbccddeaff",
-                            :ip => "2.3.04.03",           :medium => media(:one),
-                            :subnet => subnets(:one), :hostgroup => Hostgroup.find_by_name("Common"),
-                            :architecture => Architecture.first, :disk => "aaa",
-                            :environment => Environment.find_by_name("production"))
-      end
-
-      test "retrieves iPXE template if associated to the correct env and host group" do
-        assert_equal ProvisioningTemplate.find_by_name("MyString"), @host.provisioning_template({:kind => "iPXE"})
-      end
-
-      test "retrieves provision template if associated to the correct host group only" do
-        assert_equal ProvisioningTemplate.find_by_name("MyString2"), @host.provisioning_template({:kind => "provision"})
-      end
-
-      test "retrieves script template if associated to the correct OS only" do
-        assert_equal ProvisioningTemplate.find_by_name("MyScript"), @host.provisioning_template({:kind => "script"})
-      end
-
-      test "retrieves finish template if associated to the correct environment only" do
-        assert_equal ProvisioningTemplate.find_by_name("MyFinish"), @host.provisioning_template({:kind => "finish"})
-      end
-
-      test "available_template_kinds finds templates for a PXE host" do
-        os_dt = FactoryGirl.create(:os_default_template,
-                                   :template_kind=> TemplateKind.friendly.find('finish'))
-        host  = FactoryGirl.create(:host, :operatingsystem => os_dt.operatingsystem)
-
-        assert_equal [os_dt.provisioning_template], host.available_template_kinds('build')
-      end
-
-      test "available_template_kinds finds templates for an image host" do
-        os_dt = FactoryGirl.create(:os_default_template,
-                                   :template_kind=> TemplateKind.friendly.find('finish'))
-        host  = FactoryGirl.create(:host, :on_compute_resource,
-                                   :operatingsystem => os_dt.operatingsystem)
-        FactoryGirl.create(:image, :uuid => 'abcde',
-                           :compute_resource => host.compute_resource)
-        host.compute_attributes = {:image_id => 'abcde'}
-
-        assert_equal [os_dt.provisioning_template], host.available_template_kinds('image')
-      end
-
-      test "#render_template" do
-        provision_template = @host.provisioning_template({:kind => "provision"})
-        @host.expects(:load_template_vars)
-        rendered_template = @host.render_template(provision_template)
-        assert(rendered_template.include?("http://foreman.some.host.fqdn/unattended/finish"), "rendred template should parse foreman_url")
-      end
     end
 
     test "handle_ca must not perform actions when the manage_puppetca setting is false" do
@@ -1595,6 +1615,75 @@ class HostTest < ActiveSupport::TestCase
       assert_equal 2, host.interfaces.size
     end
 
+    context 'update_subnets_from_facts is enabled' do
+      setup do
+        Setting[:update_subnets_from_facts] = true
+      end
+      let(:subnet) { FactoryGirl.create(:subnet_ipv4, :dhcp, :network => '10.10.0.0') }
+
+      test "#set_interfaces updates existing physical interface when subnet does not match ip and new subnet is unknown" do
+        host = FactoryGirl.create(:host,
+                                  :managed,
+                                  :mac => '00:00:00:11:22:33',
+                                  :ip => '10.10.0.1',
+                                  :subnet => subnet
+                                 )
+        hash = { :eth0 => {:macaddress => '00:00:00:11:22:33', :ipaddress => '10.10.20.2', :virtual => false}
+        }.with_indifferent_access
+        parser = stub(:interfaces => hash, :ipmi_interface => {}, :suggested_primary_interface => hash.to_a.last)
+
+        assert_no_difference 'Nic::Base.count' do
+          host.set_interfaces(parser)
+        end
+
+        assert_equal '10.10.20.2', host.primary_interface.ip
+        assert_nil host.primary_interface.subnet
+      end
+
+      test "#set_interfaces updates existing physical interface when subnet does not match ip and new subnet is known" do
+        subnet2 = FactoryGirl.create(:subnet_ipv4, :dhcp, :network => '10.10.20.0')
+        host = FactoryGirl.create(:host,
+                                  :managed,
+                                  :mac => '00:00:00:11:22:33',
+                                  :ip => '10.10.0.1',
+                                  :subnet => subnet
+                                 )
+        hash = { :eth0 => {:macaddress => '00:00:00:11:22:33', :ipaddress => '10.10.20.2', :virtual => false}
+        }.with_indifferent_access
+        parser = stub(:interfaces => hash, :ipmi_interface => {}, :suggested_primary_interface => hash.to_a.last)
+
+        assert_no_difference 'Nic::Base.count' do
+          host.set_interfaces(parser)
+        end
+
+        assert_equal '10.10.20.2', host.primary_interface.ip
+        assert_equal subnet2, host.primary_interface.subnet
+      end
+
+      test "#set_interfaces updates existing physical interface when subnet6 is set but facts report no ipv6 addr" do
+        subnet6 = FactoryGirl.create(:subnet_ipv6, :network => '2001:db8::')
+        host = FactoryGirl.create(:host,
+                                  :managed,
+                                  :mac => '00:00:00:11:22:33',
+                                  :ip => '10.10.0.1',
+                                  :ip6 => '2001:db8::10',
+                                  :subnet => subnet,
+                                  :subnet6 => subnet6
+                                 )
+        hash = { :eth0 => {:macaddress => '00:00:00:11:22:33', :ipaddress => '10.10.0.1', :virtual => false}
+        }.with_indifferent_access
+        parser = stub(:interfaces => hash, :ipmi_interface => {}, :suggested_primary_interface => hash.to_a.last)
+
+        assert_no_difference 'Nic::Base.count' do
+          host.set_interfaces(parser)
+        end
+        assert_equal '10.10.0.1', host.primary_interface.ip
+        assert_equal subnet, host.primary_interface.subnet
+        assert_nil host.primary_interface.ip6
+        assert_nil host.primary_interface.subnet6
+      end
+    end
+
     test "#set_interfaces creates bond interfaces according to identifier" do
       host = FactoryGirl.create(:host, :hostgroup => FactoryGirl.create(:hostgroup))
       hash = {
@@ -1938,6 +2027,14 @@ class HostTest < ActiveSupport::TestCase
       results = Host.search_for(%{params.#{parameter.name} = "#{override.value}"})
       assert results.include?(host1)
       refute results.include?(host2)
+
+      results = Host.search_for(%{params.#{parameter.name} != "very_different_parameter"})
+      assert results.include?(host2)
+      assert results.include?(host1)
+
+      results = Host.search_for(%{params.#{parameter.name} != "#{parameter.value}"})
+      refute results.include?(host2)
+      assert results.include?(host1)
     end
 
     test "can search hosts by smart proxy" do
@@ -2501,8 +2598,8 @@ class HostTest < ActiveSupport::TestCase
     host = FactoryGirl.build(:host)
     host.config_groups = [config_groups(:one)]
     enc = host.info
-    assert_includes(enc.keys, 'foreman_config_groups')
-    assert_includes(enc['foreman_config_groups'], 'Monitoring')
+    assert_includes(enc['parameters'].keys, 'foreman_config_groups')
+    assert_includes(enc['parameters']['foreman_config_groups'], 'Monitoring')
   end
 
   test "#info ENC YAML contains parent hostgroup config_groups" do
@@ -2511,7 +2608,7 @@ class HostTest < ActiveSupport::TestCase
     host.config_groups = [config_groups(:one)]
     hostgroup.config_groups = [config_groups(:two)]
     enc = host.info
-    assert_equal(enc['foreman_config_groups'], ['Monitoring', 'Security'])
+    assert_equal(enc['parameters']['foreman_config_groups'], ['Monitoring', 'Security'])
   end
 
   describe 'cloning' do
@@ -2541,7 +2638,7 @@ class HostTest < ActiveSupport::TestCase
 
     test 'lookup values are copied' do
       host = FactoryGirl.create(:host, :with_puppetclass)
-      FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => 'test'})
+      FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => "fqdn\ncomment", :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => 'test'})
       copy = host.clone
       assert_equal 1, host.lookup_values.reload.size
       assert_equal 1, copy.lookup_values.size
@@ -2575,7 +2672,7 @@ class HostTest < ActiveSupport::TestCase
 
     test 'without save makes no changes' do
       host = FactoryGirl.create(:host, :with_config_group, :with_puppetclass, :with_parameter)
-      FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => 'test'})
+      FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => "fqdn\ncomment", :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => 'test'})
       ActiveRecord::Base.any_instance.expects(:destroy).never
       ActiveRecord::Base.any_instance.expects(:save).never
       host.clone
@@ -2849,13 +2946,6 @@ class HostTest < ActiveSupport::TestCase
     assert(host.valid?)
   end
 
-  test '#jumpstart? should return true for Solaris and SPARC hosts' do
-    host = FactoryGirl.create(:host,
-                              :operatingsystem => FactoryGirl.create(:solaris),
-                              :architecture => FactoryGirl.create(:architecture, :name => 'SPARC-T2'))
-    assert host.jumpstart?
-  end
-
   test '#fqdn returns the FQDN from the primary interface' do
     primary = FactoryGirl.build(:nic_managed, :primary => true, :name => 'foo', :domain => FactoryGirl.build(:domain))
     host = FactoryGirl.create(:host, :managed, :interfaces => [primary, FactoryGirl.build(:nic_managed, :provision => true)])
@@ -3064,11 +3154,33 @@ class HostTest < ActiveSupport::TestCase
       @nic.expects(:rebuild_tftp).returns(true)
       @nic.expects(:rebuild_dns).returns(true)
       @nic.expects(:rebuild_dhcp).returns(true)
-      Nic::Managed.expects(:rebuild_methods).returns(:rebuild_dhcp => "DHCP", :rebuild_dns => "DNS", :rebuild_tftp => "TFTP")
+      Nic::Managed.expects(:rebuild_methods_for).returns(:rebuild_dhcp => "DHCP", :rebuild_dns => "DNS", :rebuild_tftp => "TFTP")
+    end
+
+    test "recreate config with success - only empty" do
+      Host::Managed.expects(:rebuild_methods_for).returns(:rebuild_test => "TEST")
+      host = FactoryGirl.build(:host, :interfaces => [@nic])
+      host.expects(:rebuild_test).returns(true)
+      result = host.recreate_config([])
+      assert result["DHCP"]
+      assert result["DNS"]
+      assert result["TFTP"]
+      assert result["TEST"]
+    end
+
+    test "recreate config with success - only all values" do
+      Host::Managed.expects(:rebuild_methods_for).returns(:rebuild_test => "TEST")
+      host = FactoryGirl.build(:host, :interfaces => [@nic])
+      host.expects(:rebuild_test).returns(true)
+      result = host.recreate_config(Nic::Managed.rebuild_methods.keys + Host::Managed.rebuild_methods.keys)
+      assert result["DHCP"]
+      assert result["DNS"]
+      assert result["TFTP"]
+      assert result["TEST"]
     end
 
     test "recreate config with success" do
-      Host::Managed.expects(:rebuild_methods).returns(:rebuild_test => "TEST")
+      Host::Managed.expects(:rebuild_methods_for).returns(:rebuild_test => "TEST")
       host = FactoryGirl.build(:host, :interfaces => [@nic])
       host.expects(:rebuild_test).returns(true)
       result = host.recreate_config
@@ -3079,7 +3191,7 @@ class HostTest < ActiveSupport::TestCase
     end
 
     test "recreate config with clashing methods" do
-      Host::Managed.expects(:rebuild_methods).returns(:rebuild_dns => "DNS")
+      Host::Managed.expects(:rebuild_methods_for).returns(:rebuild_dns => "DNS")
       host = FactoryGirl.build(:host, :interfaces => [@nic])
       assert_raises(Foreman::Exception) { host.recreate_config }
     end
@@ -3119,6 +3231,27 @@ class HostTest < ActiveSupport::TestCase
       assert result["DHCP"]
       assert result["DNS"]
       assert result["TFTP"]
+    end
+  end
+
+  context "recreating host TFTP config" do
+    setup do
+      @nic = FactoryGirl.build(:nic_primary_and_provision)
+      @nic.expects(:rebuild_tftp).returns(true)
+      @nic.expects(:rebuild_dns).never
+      @nic.expects(:rebuild_dhcp).never
+      Nic::Managed.expects(:rebuild_methods_for).returns(:rebuild_tftp => "TFTP")
+    end
+
+    test "recreate TFTP config with success" do
+      Host::Managed.expects(:rebuild_methods_for).returns({})
+      host = FactoryGirl.build(:host, :interfaces => [@nic])
+      host.expects(:rebuild_test).never
+      result = host.recreate_config(['TFTP'])
+      refute result["DHCP"]
+      refute result["DNS"]
+      assert result["TFTP"]
+      refute result["TEST"]
     end
   end
 
@@ -3381,38 +3514,6 @@ class HostTest < ActiveSupport::TestCase
     end
   end
 
-  describe '#to_ip_address' do
-    setup do
-      @host = FactoryGirl.build(:host)
-    end
-
-    test 'uses host PTR4 record to lookup the IP when present' do
-      stub_dns_record = stub()
-      @host.expects(:dns_record).with(:ptr4).returns(stub_dns_record).twice
-      stub_dns_record.expects(:dns_lookup).with('foo').
-        returns(OpenStruct.new(:ip => '127.0.0.1'))
-      assert '127.0.0.1', @host.to_ip_address('foo')
-    end
-
-    test 'when IP is passed as argument, return it' do
-      assert '127.0.0.1', @host.to_ip_address('127.0.0.1')
-    end
-
-    test 'call host domain resolver if there is no PTR4 record' do
-      @host.domain = FactoryGirl.build(:domain)
-      @host.domain.expects(:nameservers).returns('8.8.8.8')
-      Resolv::DNS.any_instance.expects(:getaddress).with('foo')
-        .returns('127.0.0.1')
-      assert '127.0.0.1', @host.to_ip_address('foo')
-    end
-
-    test 'raises exception when any error happens (no domain)' do
-      assert_raises(::Foreman::WrappedException) do
-        @host.to_ip_address('foo')
-      end
-    end
-  end
-
   describe '#smart_proxy_ids' do
     test 'returns IDs for proxies associated with host services' do
       # IDs are fake, just to prove host.smart_proxy_ids gathers them
@@ -3470,6 +3571,34 @@ class HostTest < ActiveSupport::TestCase
       @host.expects(:bmc_proxy).returns(bmc_proxy_stub)
       bmc_proxy_stub.expects(:boot).with(:function => 'bootdevice', :device => 'bios').returns(true)
       assert @host.ipmi_boot('bios')
+    end
+  end
+
+  describe '#firmware_type' do
+    test 'should be :none for host with none loader' do
+      host = FactoryGirl.build(:host, :managed, :pxe_loader => "None")
+      assert_equal :none, host.firmware_type
+    end
+
+    test 'should be :bios for host with bios loader' do
+      host = FactoryGirl.build(:host, :managed, :pxe_loader => "PXELinux BIOS")
+      assert_equal :bios, host.firmware_type
+    end
+
+    test 'should be :uefi for host with uefi loader' do
+      host = FactoryGirl.build(:host, :managed, :pxe_loader => "Grub2 UEFI")
+      assert_equal :uefi, host.firmware_type
+    end
+  end
+
+  describe '#templates_used' do
+    test 'returns all templates used on a given host' do
+      os = operatingsystems(:redhat)
+      host = FactoryGirl.build(:host, :managed, :operatingsystem => os)
+      host.templates_used.each do |template_kind, template_name|
+        template = os.provisioning_templates.find_by_name(template_name).name
+        assert_equal template, host.templates_used[template_kind]
+      end
     end
   end
 

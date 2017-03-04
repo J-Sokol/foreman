@@ -28,10 +28,13 @@ class ProvisioningTemplate < Template
   scoped_search :on => :snippet, :complete_value => {:true => true, :false => false}
   scoped_search :on => :template
 
-  scoped_search :in => :operatingsystems, :on => :name, :rename => :operatingsystem, :complete_value => true
-  scoped_search :in => :environments,     :on => :name, :rename => :environment,     :complete_value => true
-  scoped_search :in => :hostgroups,       :on => :name, :rename => :hostgroup,       :complete_value => true
-  scoped_search :in => :template_kind,    :on => :name, :rename => :kind,            :complete_value => true
+  scoped_search :relation => :operatingsystems, :on => :name, :rename => :operatingsystem, :complete_value => true
+  scoped_search :relation => :environments,     :on => :name, :rename => :environment,     :complete_value => true
+  scoped_search :relation => :hostgroups,       :on => :name, :rename => :hostgroup,       :complete_value => true
+  scoped_search :relation => :template_kind,    :on => :name, :rename => :kind,            :complete_value => true
+
+  attr_exportable :kind => Proc.new { |template| template.template_kind.try(:name) },
+                  :oses => Proc.new { |template| template.operatingsystems.map(&:name).uniq }
 
   # Override method in Taxonomix as Template is not used attached to a Host,
   # and matching a Host does not prevent removing a template from its taxonomy.
@@ -46,6 +49,8 @@ class ProvisioningTemplate < Template
       order("#{Template.table_name}.name")
     end
   }
+
+  scope :of_kind, ->(kind) { joins(:template_kind).where("template_kinds.name" => kind) }
 
   def self.template_ids_for(hosts)
     hosts = hosts.with_os.uniq
@@ -69,7 +74,7 @@ class ProvisioningTemplate < Template
 
   def self.find_template(opts = {})
     raise ::Foreman::Exception.new(N_("Must provide template kind")) unless opts[:kind]
-    raise ::Foreman::Exception.new(N_("Must provide an operating systems")) unless opts[:operatingsystem_id]
+    raise ::Foreman::Exception.new(N_("Must provide an operating system")) unless opts[:operatingsystem_id]
 
     # first filter valid templates to our OS and requested template kind.
     templates = ProvisioningTemplate.joins(:operatingsystems, :template_kind).where('operatingsystems.id' => opts[:operatingsystem_id], 'template_kinds.name' => opts[:kind])
@@ -102,24 +107,39 @@ class ProvisioningTemplate < Template
     template.is_a?(ProvisioningTemplate) ? template : nil
   end
 
-  def self.build_pxe_default(renderer)
-    return [200, _("No TFTP proxies defined, can't continue")] if (proxies = SmartProxy.with_features("TFTP")).empty?
+  def self.find_global_default_template(name, kind)
+    ProvisioningTemplate.unscoped.joins(:template_kind).where(:name => name, "template_kinds.name" => kind).first
+  end
 
+  def self.global_default_name(kind)
+    "#{kind} global default"
+  end
+
+  def self.global_template_name_for(kind, renderer)
+    global_setting = Setting.find_by(:name => "global_#{kind}")
+    return global_setting.value if global_setting && global_setting.value.present?
+    global_template_name = global_default_name(kind)
+    renderer.logger.info "Could not find user defined global template from Settings for #{kind}, falling back to #{global_template_name}"
+    global_template_name
+  end
+
+  def self.build_pxe_default(renderer)
+    return [422, _("No TFTP proxies defined, can't continue")] if (proxies = SmartProxy.with_features("TFTP")).empty?
     error_msgs = []
+    used_templates = []
     TemplateKind::PXE.each do |kind|
-      default_template_name = "#{kind} global default"
-      if (default_template = ProvisioningTemplate.find_by_name(default_template_name)).nil?
-        error_msg = _("Could not find a Configuration Template with the name \"%s global default\", please create one.") % kind
+      global_template_name = global_template_name_for(kind, renderer)
+      if (default_template = find_global_default_template global_template_name, kind).nil?
+        error_msg = _("Could not find a Configuration Template with the name \"%s\", please create one.") % global_template_name
       else
         begin
           @profiles = pxe_default_combos
           allowed_helpers = Foreman::Renderer::ALLOWED_GENERIC_HELPERS + [ :default_template_url ]
           menu = renderer.render_safe(default_template.template, allowed_helpers, :profiles => @profiles)
         rescue => exception
-          Foreman::Logging.exception("Cannot render '#{default_template_name}'", exception)
+          Foreman::Logging.exception("Cannot render '#{global_template_name}'", exception)
           error_msgs << "#{exception.message} (#{kind})"
         end
-
         return [422, error_msg] unless error_msg.empty?
         proxies.each do |proxy|
           begin
@@ -127,17 +147,18 @@ class ProvisioningTemplate < Template
             tftp.create_default(kind, {:menu => menu})
             fetch_boot_files_combo(tftp)
           rescue => exception
-            Foreman::Logging.exception("Cannot deploy rendered template '#{default_template_name}' to '#{proxy}'", exception)
+            Foreman::Logging.exception("Cannot deploy rendered template '#{global_template_name}' to '#{proxy}'", exception)
             error_msgs << "#{proxy}: #{exception.message} (#{kind})"
           end
         end
       end
+      used_templates << global_template_name
     end
 
     if error_msgs.empty?
-      [200, _("PXE Default file has been deployed to all Smart Proxies")]
+      [200, _("PXE files for templates %s have been deployed to all Smart Proxies") % used_templates.to_sentence]
     else
-      [500, _("There was an error creating the PXE Default file: %s") % error_msgs.join(", ")]
+      [500, _("There was an error creating the PXE file: %s") % error_msgs.join(", ")]
     end
   end
 
@@ -174,6 +195,13 @@ class ProvisioningTemplate < Template
       end
     end
     combos.sort_by! { |profile| [profile[:hostgroup].title, profile[:template]] }
+  end
+
+  def global_default?
+    return unless template_kind
+    setting = Setting.find_by :name => "global_#{template_kind.name}"
+    return unless setting
+    setting.value == name
   end
 
   private

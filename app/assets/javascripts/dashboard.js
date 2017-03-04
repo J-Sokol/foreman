@@ -11,7 +11,7 @@ function auto_refresh(){
   if (element[0]) {
     refresh_timeout = setTimeout(function(){
       if ($(".auto-refresh").hasClass("on")) {
-        Turbolinks.visit(location.toString());
+        history.go(0);
       }
     },60000);
   }
@@ -138,4 +138,9 @@ function show_widget(id){
 
     gridster.register_widget(widget);
     fill_restore_list();
+}
+
+function widgetLoaded(widget){
+    refreshCharts();
+    tfm.tools.activateTooltips(widget);
 }

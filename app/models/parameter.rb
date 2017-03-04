@@ -10,6 +10,29 @@ class Parameter < ActiveRecord::Base
   validates :name, :presence => true, :no_whitespace => true
 
   scoped_search :on => :name, :complete_value => true
+  scoped_search :on => :type, :complete_value => true
+  scoped_search :on => :value, :complete_value => true
+
+  # children associations must be defined here, otherwise scoped search definitions won't find them
+  belongs_to :domain, :foreign_key => :reference_id, :inverse_of => :domain_parameters
+  belongs_to :operatingsystem, :foreign_key => :reference_id, :inverse_of => :os_parameters
+  belongs_to :subnet, :foreign_key => :reference_id, :inverse_of => :subnet_parameters
+  belongs_to_host :foreign_key => :reference_id, :inverse_of => :host_parameters
+  belongs_to :hostgroup, :foreign_key => :reference_id, :inverse_of => :group_parameters
+  belongs_to :location, :foreign_key => :reference_id, :inverse_of => :location_parameters
+  belongs_to :organization, :foreign_key => :reference_id, :inverse_of => :organization_parameters
+  # specific children search definitions, required for permission filters autocompletion
+  scoped_search :relation => :domain, :on => :name, :complete_value => true, :rename => 'domain_name'
+  scoped_search :relation => :operatingsystem, :on => :name, :complete_value => true, :rename => 'os_name'
+  scoped_search :relation => :subnet, :on => :name, :complete_value => true, :rename => 'subnet_name'
+  scoped_search :relation => :host, :on => :name, :complete_value => true, :rename => 'host_name'
+  scoped_search :relation => :hostgroup, :on => :name, :complete_value => true, :rename => 'host_group_name'
+  if Taxonomy.locations_enabled
+    scoped_search :relation => :location, :on => :name, :complete_value => true, :rename => 'location_name'
+  end
+  if Taxonomy.organizations_enabled
+    scoped_search :relation => :organization, :on => :name, :complete_value => true, :rename => 'organization_name'
+  end
 
   default_scope -> { order("parameters.name") }
 
@@ -24,6 +47,10 @@ class Parameter < ActiveRecord::Base
                :group_parameter => 60,
                :host_parameter => 70
              }
+
+  def editable_by_user?
+    Parameter.authorized(:edit_params).where(:id => id).exists?
+  end
 
   def self.type_priority(type)
     PRIORITY.fetch(type.to_s.underscore.to_sym, nil) unless type.nil?

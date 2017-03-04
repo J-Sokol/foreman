@@ -3,6 +3,7 @@ inherit_from:
   - .rubocop_todo.yml
 
 AllCops:
+  TargetRubyVersion: 2.0
   Include:
     - 'app/views/api/**/*.rabl'
   Exclude:
@@ -23,6 +24,10 @@ Style/Documentation:
 
 # Support both ruby19 and hash_rockets
 Style/HashSyntax:
+  Enabled: false
+
+# Both double and single quotes are OK
+Style/StringLiterals:
   Enabled: false
 
 # Don't enforce frozen string literals

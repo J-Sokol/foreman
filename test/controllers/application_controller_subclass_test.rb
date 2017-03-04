@@ -6,6 +6,10 @@ class ::TestableResourcesController < ::ApplicationController
   end
 
   def index
+    if params[:exception].present?
+      raise ProxyAPI::ProxyException.new('url', StandardError.new('noo'),
+                                         params[:exception])
+    end
     render :text => Time.zone.name, :status => 200
   end
 end
@@ -76,10 +80,12 @@ class TestableResourcesControllerTest < ActionController::TestCase
     end
 
     it "requires an account with mail" do
-      user = FactoryGirl.create(:user)
-      get :index, {}, set_session_user.merge(:user => user.id)
+      as_admin do
+        @user = FactoryGirl.create(:user)
+      end
+      get :index, {}, set_session_user.merge(:user => @user.id)
       assert_response :redirect
-      assert_redirected_to edit_user_path(user)
+      assert_redirected_to edit_user_path(@user)
       assert_equal "An email address is required, please update your account details", flash[:error]
     end
 
@@ -288,6 +294,14 @@ class TestableResourcesControllerTest < ActionController::TestCase
       assert_response :redirect
       assert_redirected_to login_users_url
       assert_equal('Your session has expired, please login again', flash[:warning])
+    end
+  end
+
+  context 'smart proxy errors are displayed when no referer is set' do
+    test 'proxy exception' do
+      get :index, { :exception => 'some error' }, set_session_user
+      assert_response :success
+      assert_match(/.*ProxyAPI::ProxyException.*some error.*/, response.body)
     end
   end
 end

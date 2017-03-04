@@ -25,7 +25,7 @@ class HostJSTest < IntegrationTestWithJavascript
     test 'class parameters and overrides are displayed correctly for strings' do
       host = FactoryGirl.create(:host, :with_puppetclass)
       FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override,
-                                      :key_type => 'string', :default_value => true,
+                                      :key_type => 'string', :default_value => true, :path => "fqdn",
                                       :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => false})
       visit edit_host_path(host)
       assert page.has_link?('Parameters', :href => '#params')
@@ -56,7 +56,7 @@ class HostJSTest < IntegrationTestWithJavascript
     test 'can override puppetclass lookup values' do
       host = FactoryGirl.create(:host, :with_puppetclass)
       FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override,
-                                      :key_type => 'string', :default_value => "true",
+                                      :key_type => 'string', :default_value => "true", :path => "fqdn",
                                       :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => "false"})
 
       visit edit_host_path(host)
@@ -102,7 +102,7 @@ class HostJSTest < IntegrationTestWithJavascript
 
   describe "create new host page" do
     test "default primary interface is in the overview table" do
-      assert_new_button(hosts_path, "New Host", new_host_path)
+      assert_new_button(hosts_path, "Create Host", new_host_path)
 
       # switch to interfaces tab
       page.find(:link, "Interfaces").click
@@ -316,7 +316,7 @@ class HostJSTest < IntegrationTestWithJavascript
     test 'class parameters and overrides are displayed correctly for booleans' do
       host = FactoryGirl.create(:host, :with_puppetclass)
       lookup_key = FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override,
-                                      :key_type => 'boolean', :default_value => 'false',
+                                      :key_type => 'boolean', :default_value => 'false', :path => "fqdn",
                                       :puppetclass => host.puppetclasses.first, :overrides => {host.lookup_value_matcher => 'false'})
       visit edit_host_path(host)
       assert page.has_link?('Parameters', :href => '#params')
@@ -466,7 +466,7 @@ class HostJSTest < IntegrationTestWithJavascript
 
         host = FactoryGirl.create(:host, :with_puppetclass)
 
-        lookup_key = FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => 'domain',
+        lookup_key = FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => "fqdn\ndomain\ncomment",
                                         :puppetclass => host.puppetclasses.first, :default_value => 'default')
         LookupValue.create(:value => 'domain', :match => "domain=#{domain.name}", :lookup_key_id => lookup_key.id)
 
@@ -535,6 +535,31 @@ class HostJSTest < IntegrationTestWithJavascript
         assert_interface_change(-1) do
           table.all(:button, "Delete").last.click
         end
+      end
+    end
+  end
+
+  describe 'Puppet Classes tab' do
+    context 'has inherited Puppetclasses' do
+      setup do
+        @hostgroup = FactoryGirl.create(:hostgroup, :with_puppetclass)
+        @host = FactoryGirl.create(:host, hostgroup: @hostgroup, environment: @hostgroup.environment)
+
+        visit edit_host_path(@host)
+        page.find(:link, 'Puppet Classes', href: '#puppet_klasses').click
+      end
+
+      test 'it mentions the hostgroup by name in the tooltip' do
+        page.find('#puppet_klasses .panel h3 a').click
+        class_element = page.find('#inherited_ids>li')
+
+        assert_equal @hostgroup.puppetclasses.first.name, class_element.text
+      end
+
+      test 'it shows a header mentioning the hostgroup inherited from' do
+        header_element = page.find('#puppet_klasses .panel h3 a')
+
+        assert header_element.text =~ /#{@hostgroup.name}$/
       end
     end
   end

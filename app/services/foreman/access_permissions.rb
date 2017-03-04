@@ -4,7 +4,8 @@ require 'foreman/access_control'
 Foreman::AccessControl.map do |permission_set|
   permission_set.security_block :public do |map|
     map.permission :user_logout, { :users => [:logout] }, :public => true
-    map.permission :my_account, { :users => [:edit] }, :public => true
+    map.permission :my_account, { :users => [:edit],
+      :notification_recipients => [:index, :update, :destroy] }, :public => true
     map.permission :api_status, { :"api/v1/home" => [:status], :"api/v2/home" => [:status]}, :public => true
     map.permission :about_index, { :about => [:index] }, :public => true
   end
@@ -80,12 +81,12 @@ Foreman::AccessControl.map do |permission_set|
 
   permission_set.security_block :compute_resources do |map|
     ajax_actions = [:test_connection]
-    map.permission :view_compute_resources, {:compute_resources => [:index, :show, :auto_complete_search, :ping, :available_images],
+    map.permission :view_compute_resources, {:compute_resources => [:index, :show, :auto_complete_search, :ping, :available_images, :refresh_cache],
                                                 :"api/v1/compute_resources" => [:index, :show],
                                                 :"api/v2/compute_resources" => [:index, :show, :available_images, :available_clusters, :available_folders,
                                                                                 :available_flavors, :available_networks, :available_resource_pools,
                                                                                 :available_security_groups, :available_storage_domains, :available_zones,
-                                                                                :available_storage_pods]
+                                                                                :available_storage_pods, :refresh_cache]
     }
     map.permission :create_compute_resources, {:compute_resources => [:new, :create].push(*ajax_actions),
                                                 :"api/v1/compute_resources" => [:create],
@@ -113,10 +114,10 @@ Foreman::AccessControl.map do |permission_set|
   end
 
   permission_set.security_block :provisioning_templates do |map|
-    map.permission :view_provisioning_templates,    {:provisioning_templates => [:index, :show, :revision, :auto_complete_search, :preview],
+    map.permission :view_provisioning_templates,    {:provisioning_templates => [:index, :show, :revision, :auto_complete_search, :preview, :export],
                                         :"api/v1/config_templates" => [:index, :show, :revision],
                                         :"api/v2/config_templates" => [:index, :show, :revision],
-                                        :"api/v2/provisioning_templates" => [:index, :show, :revision],
+                                        :"api/v2/provisioning_templates" => [:index, :show, :revision, :export],
                                         :"api/v2/template_combinations" => [:index, :show],
                                         :"api/v1/template_kinds" => [:index],
                                         :"api/v2/template_kinds" => [:index]
@@ -273,25 +274,6 @@ Foreman::AccessControl.map do |permission_set|
                                       :'api/v2/filters' => [:destroy]}
   end
 
-  permission_set.security_block :global_variables do |map|
-    map.permission :view_globals,    {:common_parameters => [:index, :show, :auto_complete_search],
-                                      :"api/v1/common_parameters" => [:index, :show],
-                                      :"api/v2/common_parameters" => [:index, :show]
-    }
-    map.permission :create_globals, {:common_parameters => [:new, :create],
-                                      :"api/v1/common_parameters" => [:create],
-                                      :"api/v2/common_parameters" => [:create]
-    }
-    map.permission :edit_globals, {:common_parameters => [:edit, :update],
-                                      :"api/v1/common_parameters" => [:update],
-                                      :"api/v2/common_parameters" => [:update]
-    }
-    map.permission :destroy_globals, {:common_parameters => [:destroy],
-                                      :"api/v1/common_parameters" => [:destroy],
-                                      :"api/v2/common_parameters" => [:destroy]
-    }
-  end
-
   permission_set.security_block :hostgroups do |map|
     ajax_actions = [:architecture_selected, :domain_selected, :environment_selected, :medium_selected, :os_selected,
                     :use_image_selected, :process_hostgroup, :puppetclass_parameters, :welcome]
@@ -348,7 +330,7 @@ Foreman::AccessControl.map do |permission_set|
 
     map.permission :view_hosts,    {:hosts => [:index, :show, :errors, :active, :out_of_sync, :disabled, :pending, :vm,
                                                :externalNodes, :pxe_config, :storeconfig_klasses, :auto_complete_search, :bmc,
-                                               :runtime, :resources, :templates, :overview, :nics],
+                                               :runtime, :resources, :templates, :overview, :nics, :get_power_state],
                                     :dashboard => [:OutOfSync, :errors, :active],
                                     :unattended => [:host_template, :hostgroup_template],
                                      :"api/v1/hosts" => [:index, :show, :status],
@@ -413,15 +395,28 @@ Foreman::AccessControl.map do |permission_set|
                                     :"api/v2/host_classes" => [:index, :create, :destroy]
                                 }
     map.permission :view_params, { :host_editing => [:view_params],
+                                   :parameters => [:index, :auto_complete_search],
+                                   :common_parameters => [:index, :show, :auto_complete_search],
+                                   :"api/v1/common_parameters" => [:index, :show],
+                                   :"api/v2/common_parameters" => [:index, :show],
                                    :"api/v2/parameters" => [:index, :show]
                                }
     map.permission :create_params, { :host_editing => [:create_params],
+                                     :common_parameters => [:new, :create],
+                                     :"api/v1/common_parameters" => [:create],
+                                     :"api/v2/common_parameters" => [:create],
                                      :"api/v2/parameters" => [:create]
                                  }
     map.permission :edit_params, { :host_editing => [:edit_params],
+                                   :common_parameters => [:edit, :update],
+                                   :"api/v1/common_parameters" => [:update],
+                                   :"api/v2/common_parameters" => [:update],
                                    :"api/v2/parameters" => [:update]
                                }
     map.permission :destroy_params, { :host_editing => [:destroy_params],
+                                      :common_parameters => [:destroy],
+                                      :"api/v1/common_parameters" => [:destroy],
+                                      :"api/v2/common_parameters" => [:destroy],
                                       :"api/v2/parameters" => [:destroy, :reset]
                                   }
   end
@@ -443,6 +438,11 @@ Foreman::AccessControl.map do |permission_set|
                                      :"api/v1/images" => [:destroy],
                                      :"api/v2/images" => [:destroy]
     }
+  end
+
+  permission_set.security_block :key_pairs do |map|
+    map.permission :view_keypairs, {:key_pairs => [:index, :show]}
+    map.permission :destroy_keypairs, {:key_pairs => [:destroy, :create]}
   end
 
   if SETTINGS[:locations_enabled]
@@ -534,9 +534,9 @@ Foreman::AccessControl.map do |permission_set|
   end
 
   permission_set.security_block :partition_tables do |map|
-    map.permission :view_ptables, {:ptables => [:index, :show, :auto_complete_search, :revision, :preview, :welcome],
+    map.permission :view_ptables, {:ptables => [:index, :show, :auto_complete_search, :revision, :preview, :welcome, :export],
                                       :"api/v1/ptables" => [:index, :show],
-                                      :"api/v2/ptables" => [:index, :show, :revision]
+                                      :"api/v2/ptables" => [:index, :show, :revision, :export]
     }
     map.permission :create_ptables, {:ptables => [:new, :create, :clone_template],
                                       :"api/v1/ptables" => [:create],
@@ -624,8 +624,10 @@ Foreman::AccessControl.map do |permission_set|
                                                      :"api/v1/autosign" => [:index],
                                                      :"api/v2/autosign" => [:index]
                                                     }
-    map.permission :create_smart_proxies_autosign,  {:autosign => [:new, :create]}
-    map.permission :destroy_smart_proxies_autosign, {:autosign => [:destroy]}
+    map.permission :create_smart_proxies_autosign,  {:autosign => [:new, :create],
+                                                     :"api/v2/autosign" => [:create]}
+    map.permission :destroy_smart_proxies_autosign, {:autosign => [:destroy],
+                                                     :"api/v2/autosign" => [:destroy]}
   end
 
   permission_set.security_block :smart_proxies_puppetca do |map|
@@ -725,10 +727,6 @@ Foreman::AccessControl.map do |permission_set|
                    :users => [:destroy],
                    :"api/v1/users" => [:destroy],
                    :"api/v2/users" => [:destroy]
-  end
-
-  permission_set.security_block :settings_menu do |map|
-    map.permission :access_settings,  {:home => [:settings]}
   end
 
   permission_set.security_block :dashboard do |map|

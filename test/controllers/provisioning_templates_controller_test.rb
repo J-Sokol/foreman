@@ -40,19 +40,27 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
     @request.env['HTTP_REFERER'] = provisioning_templates_path
     get :lock, {:id => templates(:pxekickstart).to_param }, set_session_user
     assert_redirected_to provisioning_templates_path
-    assert_equal ProvisioningTemplate.find(templates(:pxekickstart).id).locked, true
+    assert_equal ProvisioningTemplate.unscoped.find(templates(:pxekickstart).id).locked, true
   end
 
   test "unlock" do
     @request.env['HTTP_REFERER'] = provisioning_templates_path
     get :unlock, {:id => templates(:locked).to_param }, set_session_user
     assert_redirected_to provisioning_templates_path
-    assert_equal ProvisioningTemplate.find(templates(:locked).id).locked, false
+    assert_equal ProvisioningTemplate.unscoped.find(templates(:locked).id).locked, false
   end
 
   test "clone" do
     get :clone_template, {:id => templates(:pxekickstart).to_param }, set_session_user
     assert_template 'new'
+  end
+
+  test "export" do
+    get :export, { :id => templates(:pxekickstart).to_param }, set_session_user
+    assert_response :success
+    assert_equal 'text/plain', response.content_type
+    assert_equal templates(:pxekickstart).to_erb, response.body
+    assert_equal 'attachment; filename="centos5_3_pxelinux.erb"', response.headers['Content-Disposition']
   end
 
   test "update invalid" do
@@ -71,7 +79,7 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
     config_template = templates(:pxekickstart)
     delete :destroy, {:id => config_template.to_param }, set_session_user
     assert_redirected_to provisioning_templates_url
-    assert ProvisioningTemplate.exists?(config_template.id)
+    assert ProvisioningTemplate.unscoped.exists?(config_template.id)
   end
 
   test "destroy" do
@@ -79,7 +87,7 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
     config_template.os_default_templates.clear
     delete :destroy, {:id => config_template.to_param }, set_session_user
     assert_redirected_to provisioning_templates_url
-    assert !ProvisioningTemplate.exists?(config_template.id)
+    assert !ProvisioningTemplate.unscoped.exists?(config_template.id)
   end
 
   test "audit comment" do
@@ -111,7 +119,8 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
           ProvisioningTemplate.create!(:name => "#{kind.downcase}_#{snippet_type}", :template => snippet, :snippet => true)
         end
         template = File.read(File.expand_path(File.dirname(__FILE__) + "/../../app/views/unattended/pxe/#{kind}_default.erb"))
-        ProvisioningTemplate.find_or_create_by(:name => "#{kind} global default").update_attribute(:template, template)
+        template_kind = TemplateKind.find_by :name => kind
+        ProvisioningTemplate.find_or_create_by(:name => "#{kind} global default").update_attributes(:template => template, :template_kind => template_kind)
       end
       ProxyAPI::TFTP.any_instance.stubs(:fetch_boot_file).returns(true)
       Setting[:unattended_url] = "http://foreman.unattended.url"
@@ -122,6 +131,12 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
       ProxyAPI::TFTP.any_instance.expects(:create_default).with(regexp_matches(/^PXE.*/), has_entry(:menu, regexp_matches(/ks=http:\/\/foreman.unattended.url\/unattended\/template/))).returns(true).times(3)
       get :build_pxe_default, {}, set_session_user
       assert_redirected_to provisioning_templates_path
+    end
+
+    test "build menu should return with error code if no TFTP defined" do
+      SmartProxy.stubs(:with_features).with('TFTP').returns([])
+      get :build_pxe_default, {}, set_session_user
+      assert flash[:error].present?
     end
 
     test "pxe menu's labels should be sorted" do
@@ -172,7 +187,7 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
     assert_equal '2', @response.body
 
     post :preview, { :template => '<%= 1+ -%>', :id => template }, set_session_user
-    assert_includes @response.body, 'There was an error'
+    assert_includes @response.body, 'parse error on value'
   end
 
   context 'templates combinations' do
@@ -185,8 +200,8 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
         :template_kind_id => TemplateKind.find_by_name('iPXE').id,
         :template_combinations_attributes => { '3923' => template_combination }
       }
-      assert_difference('TemplateCombination.count', 1) do
-        assert_difference('ProvisioningTemplate.count', 1) do
+      assert_difference('TemplateCombination.unscoped.count', 1) do
+        assert_difference('ProvisioningTemplate.unscoped.count', 1) do
           post :create, {
             :provisioning_template => provisioning_template
           }, set_session_user
@@ -216,8 +231,10 @@ class ProvisioningTemplatesControllerTest < ActionController::TestCase
           }
         }, set_session_user
         assert_response :found
-        @template_combination.reload
-        assert_equal new_environment, @template_combination.environment
+        as_admin do
+          @template_combination.reload
+          assert_equal new_environment, @template_combination.environment
+        end
       end
 
       test 'can be destroyed' do

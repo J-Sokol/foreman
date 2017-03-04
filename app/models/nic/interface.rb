@@ -17,7 +17,6 @@ module Nic
 
     # aliases and vlans require identifiers so we can differentiate and properly configure them
     validates :identifier, :presence => true, :if => Proc.new { |o| o.virtual? && o.managed? && o.instance_of?(Nic::Managed) }
-    validate :identifier_change, :on => :update
 
     validate :alias_subnet
 
@@ -68,19 +67,6 @@ module Nic
       errors.add(:ip6, _("is invalid")) if ip6.present? && !Net::Validations.validate_ip6(ip6)
     end
 
-    # we don't allow changes to identifier which would change the interface type e.g. eth0 -> eth0,1 would make
-    # a vlan virtual interface from physical one
-    def identifier_change
-      old_value = self.identifier_was || ''
-      new_value = self.identifier || ''
-
-      %w(. :).each do |forbidden|
-        if old_value.include?(forbidden) != new_value.include?(forbidden)
-          errors.add(:identifier, _("Can't add or remove `%s` from identifier") % forbidden)
-        end
-      end
-    end
-
     def alias_subnet
       if self.managed? && self.alias? && self.subnet && self.subnet.boot_mode != Subnet::BOOT_MODES[:static]
         errors.add(:subnet_id, _('subnet boot mode is not %s' % _(Subnet::BOOT_MODES[:static])))
@@ -97,7 +83,7 @@ module Nic
     # this is done to ensure compatibility with puppet storeconfigs
     def normalize_name
       # Remove whitespace
-      self.name.gsub!(/\s/,'') if self.name
+      self.name = self.name.gsub(/\s/, '') if self.name
       # no hostname was given or a domain was selected, since this is before validation we need to ignore
       # it and let the validations to produce an error
       return if name.empty?
@@ -108,7 +94,7 @@ module Nic
         # if we've just updated the domain name, strip off the old one
         old_domain = Domain.find(changed_attributes["domain_id"])
         # Remove the old domain, until fqdn will be set as the full name
-        self.name.chomp!("." + old_domain.to_s)
+        self.name = self.name.chomp('.' + old_domain.to_s)
       end
       # name should be fqdn
       self.name = fqdn

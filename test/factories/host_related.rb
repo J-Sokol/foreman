@@ -17,6 +17,8 @@ FactoryGirl.define do
     sequence(:name) { |n| "ptable#{n}" }
     layout 'zerombr\nclearpart --all    --initlabel\npart /boot --fstype ext3 --size=<%= 10 * 10 %> --asprimary\npart /     --f   stype ext3 --size=1024 --grow\npart swap  --recommended'
     os_family 'Redhat'
+    organizations { [Organization.find_by_name('Organization 1')] } if SETTINGS[:organizations_enabled]
+    locations { [Location.find_by_name('Location 1')] } if SETTINGS[:locations_enabled]
 
     trait :ubuntu do
       sequence(:name) { |n| "ubuntu default#{n}" }
@@ -66,7 +68,7 @@ FactoryGirl.define do
   factory :nic_managed, :class => Nic::Managed, :parent => :nic_interface do
     type 'Nic::Managed'
     sequence(:mac) { |n| "00:33:45:ab:" + n.to_s(16).rjust(4, '0').insert(2, ':') }
-    sequence(:ip) { |n| IPAddr.new(n, Socket::AF_INET).to_s }
+    sequence(:ip) { |n| IPAddr.new((subnet.present? ? subnet.ipaddr.to_i : 0) + n, Socket::AF_INET).to_s }
 
     trait :without_ipv4 do
       ip nil
@@ -80,7 +82,7 @@ FactoryGirl.define do
   factory :nic_bmc, :class => Nic::BMC, :parent => :nic_managed do
     type 'Nic::BMC'
     sequence(:mac) { |n| "00:43:56:cd:" + n.to_s(16).rjust(4, '0').insert(2, ':') }
-    sequence(:ip) { |n| IPAddr.new(255 + n, Socket::AF_INET).to_s }
+    sequence(:ip) { |n| IPAddr.new((subnet.present? ? subnet.ipaddr.to_i : 255) + n, Socket::AF_INET).to_s }
     provider 'IPMI'
     username 'admin'
     password 'admin'
@@ -110,6 +112,8 @@ FactoryGirl.define do
     sequence(:name) { |n| "host#{n}" }
     sequence(:hostname) { |n| "host#{n}" }
     root_pass 'xybxa6JUkz63w'
+    organization { Organization.find_by_name('Organization 1') } if SETTINGS[:organizations_enabled]
+    location { Location.find_by_name('Location 1') } if SETTINGS[:locations_enabled]
 
     # This allows a test to declare build/create(:host, :ip => '1.2.3.4') and
     # have the primary interface correctly updated with the specified attrs
@@ -168,15 +172,17 @@ FactoryGirl.define do
         report_count 5
       end
       after(:create) do |host,evaluator|
-        evaluator.report_count.times do
-          report = FactoryGirl.create(:report, :host => host)
+        evaluator.report_count.times do |i|
+          report = FactoryGirl.create(:report, :host => host, :reported_at => (evaluator.report_count - i).minutes.ago)
           host.last_report = report.reported_at
         end
       end
     end
 
     trait :on_compute_resource do
-      uuid Foreman.uuid
+      sequence :uuid do |n|
+        Foreman.uuid
+      end
       association :compute_resource, :factory => :ec2_cr
       before(:create) { |host| host.expects(:queue_compute) }
     end
@@ -193,6 +199,7 @@ FactoryGirl.define do
         overrides[:locations] = [host.location] unless host.location.nil?
         overrides[:organizations] = [host.organization] unless host.organization.nil?
         host.subnet = FactoryGirl.build(:subnet_ipv4, overrides)
+        host.ip = IPAddr.new(IPAddr.new(host.subnet.network).to_i + 1, Socket::AF_INET).to_s
       end
     end
 
@@ -229,8 +236,6 @@ FactoryGirl.define do
       architecture { operatingsystem.try(:architectures).try(:first) }
       medium { operatingsystem.try(:media).try(:first) }
       ptable { operatingsystem.try(:ptables).try(:first) }
-      location
-      organization
       domain
       interfaces { [ FactoryGirl.build(:nic_primary_and_provision) ] }
       association :operatingsystem, :with_associations
@@ -428,6 +433,8 @@ FactoryGirl.define do
 
   factory :hostgroup do
     sequence(:name) { |n| "hostgroup#{n}" }
+    organizations { [Organization.find_by_name('Organization 1')] } if SETTINGS[:organizations_enabled]
+    locations { [Location.find_by_name('Location 1')] } if SETTINGS[:locations_enabled]
 
     trait :with_parent do
       association :parent, :factory => :hostgroup

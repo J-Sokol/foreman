@@ -2,12 +2,15 @@ module Api::V2::TaxonomiesController
   extend ActiveSupport::Concern
 
   included do
+    include ParameterAttributes
+
     before_action :rename_config_template, :only => %w{update create}
     before_action :find_optional_nested_object
     before_action :find_taxonomy, :only => %w(show update destroy settings
                                               domain_ids subnet_ids hostgroup_ids config_template_ids ptable_ids compute_resource_ids
                                               medium_ids smart_proxy_ids environment_ids user_ids organization_ids realm_ids)
     before_action :params_match_database, :only => %w(create update)
+    before_action :process_parameter_attributes, :only => %w(update)
   end
 
   extend Apipie::DSL::Concern
@@ -36,13 +39,13 @@ module Api::V2::TaxonomiesController
   api :GET, '/:resource_id', N_('List all :resource_id')
   param_group :search_and_pagination, ::Api::V2::BaseController
   def index
-    if @nested_obj
-      @taxonomies = @nested_obj.send(taxonomies_plural).send(:completer_scope, :controller => taxonomies_plural).search_for(*search_options).paginate(paginate_options)
-      @total = @nested_obj.send(taxonomies_plural).send(:completer_scope, :controller => taxonomies_plural).count
-    else
-      @taxonomies = taxonomy_class.send("my_#{taxonomies_plural}").search_for(*search_options).paginate(paginate_options)
-      @total = taxonomy_class.send("my_#{taxonomies_plural}").count
-    end
+    taxonomy_scope = if @nested_obj
+                       taxonomy_class.where(:id => @nested_obj.send("#{taxonomy_single}_ids"))
+                     else
+                       taxonomy_class
+                     end
+    @taxonomies = taxonomy_scope.send("my_#{taxonomies_plural}").search_for(*search_options).paginate(paginate_options)
+    @total = taxonomy_scope.send("my_#{taxonomies_plural}").count
     instance_variable_set("@#{taxonomies_plural}", @taxonomies)
 
     @render_template ||= 'api/v2/taxonomies/index'
@@ -50,6 +53,8 @@ module Api::V2::TaxonomiesController
   end
 
   api :GET, '/:resource_id/:id', N_('Show :a_resource')
+  param :show_hidden_parameters, :bool, :desc => N_("Display hidden parameter values")
+  param :id, :identifier, :required => true
   def show
     @render_template ||= 'api/v2/taxonomies/show'
     render @render_template
@@ -65,6 +70,7 @@ module Api::V2::TaxonomiesController
 
   api :PUT, '/:resource_id/:id', N_('Update :a_resource')
   param_group :resource
+  param :id, :identifier, :required => true
   def update
     # NOTE - if not ! and invalid, the error is undefined method `permission_failed?' for #<Location:0x7fe38c1d3ec8> (NoMethodError)
     # removed process_response & added explicit render 'api/v2/taxonomies/update'.  Otherwise, *_ids are not returned
@@ -73,6 +79,7 @@ module Api::V2::TaxonomiesController
   end
 
   api :DELETE, '/:resource_id/:id', N_('Delete :a_resource')
+  param :id, :identifier, :required => true
   def destroy
     process_response @taxonomy.destroy
   rescue Ancestry::AncestryException

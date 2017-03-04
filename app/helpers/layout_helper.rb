@@ -102,7 +102,7 @@ module LayoutHelper
       result = "".html_safe
       result += alert_close if opts[:close]
       result += alert_header(opts[:header], opts[:class])
-      result += content_tag(:span, opts[:text].html_safe, :class => 'text')
+      result += content_tag(:span, opts[:text], :class => 'text')
       result += alert_actions(opts[:actions]) if opts[:actions].present?
       result
     end
@@ -182,6 +182,10 @@ module LayoutHelper
                :locals => { options[:form_builder_local] => f }.merge(options[:form_builder_attrs]))
       end
     end
+  end
+
+  def render_if_partial_exists(path, f)
+    render path, :f => f if lookup_context.exists?(path, [], true)
   end
 
   private

@@ -12,6 +12,7 @@ class UnattendedController < ApplicationController
     alias_method_chain f, :unattended
   end
 
+  before_action :set_admin_user, :unless => Proc.new { preview? }
   # We want to find out our requesting host
   before_action :get_host_details, :allowed_to_install?, :except => :hostgroup_template
   before_action :handle_ca, :if => Proc.new { params[:kind] == 'provision' }
@@ -20,7 +21,6 @@ class UnattendedController < ApplicationController
   before_action :load_template_vars, :only => :host_template
   # all of our requests should be returned in text/plain
   after_action :set_content_type
-  before_action :set_admin_user, :only => :built
 
   # this actions is called by each operatingsystem post/finish script - it notify us that the OS installation is done.
   def built
@@ -32,8 +32,8 @@ class UnattendedController < ApplicationController
   def hostgroup_template
     return head(:not_found) unless (params.has_key?("id") && params.has_key?(:hostgroup))
 
-    template = ProvisioningTemplate.find_by_name(params['id'])
-    @host = Hostgroup.find_by_title(params['hostgroup'])
+    template = ProvisioningTemplate.find_by_name(params['id'].to_s)
+    @host = Hostgroup.find_by_title(params['hostgroup'].to_s)
     return head(:not_found) unless template && @host
 
     load_template_vars if template.template_kind.name == 'provision'
@@ -71,13 +71,7 @@ class UnattendedController < ApplicationController
     type = 'iPXE' if type == 'gPXE'
 
     if (config = @host.provisioning_template({ :kind => type }))
-      if !preview?
-        User.as_anonymous_admin do
-          safe_render config
-        end
-      else
-        safe_render config
-      end
+      safe_render config
     else
       error_message = N_("unable to find %{type} template for %{host} running %{os}")
       render_custom_error(:not_found, error_message, {:type => type, :host => @host.name, :os => @host.operatingsystem})
@@ -152,7 +146,7 @@ class UnattendedController < ApplicationController
   end
 
   def allowed_to_install?
-    (@host.build || @spoof) ? true : head(:method_not_allowed)
+    (@host.build || @spoof || Setting[:access_unattended_without_build]) ? true : head(:method_not_allowed)
   end
 
   # Cleans Certificate and enable autosign. This is run as a before_action for provisioning templates.

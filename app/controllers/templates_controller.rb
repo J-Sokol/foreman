@@ -4,7 +4,7 @@ class TemplatesController < ApplicationController
   include Foreman::Controller::AutoCompleteSearch
 
   before_action :handle_template_upload, :only => [:create, :update]
-  before_action :find_resource, :only => [:edit, :update, :destroy, :clone_template, :lock, :unlock]
+  before_action :find_resource, :only => [:edit, :update, :destroy, :clone_template, :lock, :unlock, :export]
   before_action :load_history, :only => :edit
   before_action :type_name_plural, :type_name_singular, :resource_class
 
@@ -95,6 +95,10 @@ class TemplatesController < ApplicationController
     safe_render(@template)
   end
 
+  def export
+    send_data @template.to_erb, :type => 'text/plain', :disposition => 'attachment', :filename => @template.filename
+  end
+
   private
 
   def safe_render(template)
@@ -102,8 +106,13 @@ class TemplatesController < ApplicationController
     render :text => unattended_render(template)
   rescue => error
     Foreman::Logging.exception("Error rendering the #{template.name} template", error)
-    render :text => _("There was an error rendering the %{name} template: %{error}") % {:name => template.name, :error => error.message},
-           :status => :internal_server_error
+    if error.is_a?(Foreman::Renderer::RenderingError)
+      text = error.message
+    else
+      text = _("There was an error rendering the %{name} template: %{error}") % {:name => template.name, :error => error.message}
+    end
+
+    render :text => text, :status => :internal_server_error
   end
 
   def set_locked(locked)
@@ -124,7 +133,7 @@ class TemplatesController < ApplicationController
     case params[:action]
       when 'lock', 'unlock'
         :lock
-      when 'clone_template', 'preview'
+      when 'clone_template', 'preview', 'export'
         :view
       else
         super

@@ -14,6 +14,8 @@ FactoryGirl.define do
     auth_source { AuthSourceInternal.first }
     password 'password'
     sequence(:login) {|n| "user#{n}" }
+    organizations { [ Organization.find_by_name('Organization 1') ] }
+    locations { [ Location.find_by_name('Location 1') ] }
 
     trait :admin do
       admin { true }
@@ -34,6 +36,10 @@ FactoryGirl.define do
 
     trait :with_widget do
       after(:create) { |user,evaluator| FactoryGirl.create(:widget, :user => user) }
+    end
+
+    trait :with_usergroup do
+      usergroups { [FactoryGirl.create(:usergroup)] }
     end
   end
 

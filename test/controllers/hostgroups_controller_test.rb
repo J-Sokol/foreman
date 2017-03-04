@@ -12,7 +12,7 @@ class HostgroupsControllerTest < ActionController::TestCase
   end
 
   def test_nest
-    get :nest, {:id => Hostgroup.first.id}, set_session_user
+    get :nest, {:id => hostgroups(:common).id}, set_session_user
     assert_template 'new'
   end
 
@@ -31,22 +31,22 @@ class HostgroupsControllerTest < ActionController::TestCase
   end
 
   def test_clone
-    get :clone, {:id => Hostgroup.first}, set_session_user
+    get :clone, {:id => hostgroups(:common)}, set_session_user
     assert_template 'new'
   end
 
   def test_edit
-    get :edit, {:id => Hostgroup.first}, set_session_user
+    get :edit, {:id => hostgroups(:common)}, set_session_user
     assert_template 'edit'
   end
 
   def test_update_invalid
-    put :update, {:id => Hostgroup.first, :hostgroup => { :name => '' }}, set_session_user
+    put :update, {:id => hostgroups(:common), :hostgroup => { :name => '' }}, set_session_user
     assert_template 'edit'
   end
 
   def test_update_valid
-    put :update, {:id => Hostgroup.first, :hostgroup => { :name => Hostgroup.first.name }}, set_session_user
+    put :update, {:id => hostgroups(:common), :hostgroup => { :name => hostgroups(:common).name }}, set_session_user
     assert_redirected_to hostgroups_url
   end
 
@@ -63,8 +63,8 @@ class HostgroupsControllerTest < ActionController::TestCase
 
   test 'user with viewer rights should fail to edit a hostgroup ' do
     setup_user "view"
-    get :edit, {:id => Hostgroup.first.id}, set_session_user.merge(:user => users(:one).id)
-    assert_equal @response.status, 403
+    get :edit, {:id => hostgroups(:common).id}, set_session_user.merge(:user => users(:one).id)
+    assert_response :forbidden
   end
 
   test 'user with viewer rights should succeed in viewing hostgroups' do
@@ -124,33 +124,55 @@ class HostgroupsControllerTest < ActionController::TestCase
     subnet = FactoryGirl.create(:subnet_ipv4)
     domain.subnets << subnet
     domain.save
-    xhr :post, :domain_selected, {:id => Hostgroup.first, :hostgroup => {}, :domain_id => domain.id, :format => :json}, set_session_user
+    xhr :post, :domain_selected, {:id => hostgroups(:common), :hostgroup => {}, :domain_id => domain.id, :format => :json}, set_session_user
     assert_equal subnet.name, JSON.parse(response.body)[0]["subnet"]["name"]
     assert_equal subnet.unused_ip.suggest_new?, JSON.parse(response.body)[0]["subnet"]["unused_ip"]["suggest_new"]
   end
 
   test "domain_selected should return empty on no domain_id" do
-    xhr :post, :domain_selected, {:id => Hostgroup.first, :hostgroup => {}, :format => :json, :domain_id => nil}, set_session_user
+    xhr :post, :domain_selected, {:id => hostgroups(:common), :hostgroup => {}, :format => :json, :domain_id => nil}, set_session_user
     assert_response :success
     assert_empty JSON.parse(response.body)
   end
 
   test "architecture_selected should not fail when no architecture selected" do
-    post :architecture_selected, {:id => Hostgroup.first, :hostgroup => {}, :architecture_id => nil}, set_session_user
+    post :architecture_selected, {:id => hostgroups(:common), :hostgroup => {}, :architecture_id => nil}, set_session_user
     assert_response :success
     assert_template :partial => "common/os_selection/_architecture"
   end
 
-  test "should return the selected puppet classes on environment change" do
-    env = FactoryGirl.create(:environment)
-    klass = FactoryGirl.create(:puppetclass)
-    hg = FactoryGirl.create(:hostgroup, :environment => env)
-    assert_equal 0, hg.puppetclasses.length
-    post :environment_selected, { :id => hg.id,
-                                  :hostgroup => { :name => hg.name,
-                                                  :puppetclass_ids => [klass.id],
-                                                  :environment_id => "" }}, set_session_user
-    assert_equal(1, (assigns(:hostgroup).puppetclasses.length))
+  describe '#environment_selected' do
+    setup do
+      @environment = FactoryGirl.create(:environment)
+      @puppetclass = FactoryGirl.create(:puppetclass)
+      @hostgroup = FactoryGirl.create(:hostgroup, :environment => @environment)
+      @params = {
+        id: @hostgroup.id,
+        hostgroup: {
+          name: @hostgroup.name,
+          environment_id: "",
+          puppetclass_ids: [@puppetclass.id]
+        }
+      }
+    end
+
+    test "should return the selected puppet classes on environment change" do
+      assert_equal 0, @hostgroup.puppetclasses.length
+
+      post :environment_selected, @params, set_session_user
+      assert_equal(1, (assigns(:hostgroup).puppetclasses.length))
+      assert_include assigns(:hostgroup).puppetclasses, @puppetclass
+    end
+
+    context 'no environment_id param is set' do
+      test 'it will take the hostgroup params environment_id' do
+        other_environment = FactoryGirl.create(:environment)
+        @params[:hostgroup][:environment_id] = other_environment.id
+
+        post :environment_selected, @params, set_session_user
+        assert_equal assigns(:environment), other_environment
+      end
+    end
   end
 
   test 'user with view_params rights should see parameters in a hostgroup' do
@@ -180,8 +202,10 @@ class HostgroupsControllerTest < ActionController::TestCase
       post :create, {"hostgroup" => {"name"=>"test_it", "parent_id" => @base.id, :realm_id => realms(:myrealm).id,
                                      :group_parameters_attributes => {"0" => {:name => "x", :value =>"overridden", :_destroy => ""}}}}, set_session_user
       assert_redirected_to hostgroups_url
-      hostgroup = Hostgroup.where(:name => "test_it").last
-      assert_equal "overridden", hostgroup.parameters["x"]
+      hostgroup = Hostgroup.unscoped.where(:name => "test_it").last
+      as_admin do
+        assert_equal "overridden", hostgroup.parameters["x"]
+      end
     end
 
     it "updates a hostgroup with a parent parameter" do
@@ -192,8 +216,10 @@ class HostgroupsControllerTest < ActionController::TestCase
       post :update, {"id" => child.id, "hostgroup" => {"name" => child.name,
                                                        :group_parameters_attributes => {"0" => {:name => "x", :value =>"overridden", :_destroy => ""}}}}, set_session_user
       assert_redirected_to hostgroups_url
-      child.reload
-      assert_equal "overridden", child.parameters["x"]
+      as_admin do
+        child.reload
+        assert_equal "overridden", child.parameters["x"]
+      end
     end
 
     it "updates a hostgroup with a parent parameter, allows empty values" do
@@ -202,12 +228,14 @@ class HostgroupsControllerTest < ActionController::TestCase
         assert_equal "original", child.parameters["x"]
       end
       post :update, {"id" => child.id, "hostgroup" => {"name" => child.name,
-                                                       :group_parameters_attributes => {"0" => {:name => "x", :value => nil, :_destroy => ""},
+                                                       :group_parameters_attributes => {"0" => {:name => "x", :value => "", :_destroy => ""},
                                                                                         "1" => {:name => "y", :value => "overridden", :_destroy => ""}}}}, set_session_user
       assert_redirected_to hostgroups_url
-      child.reload
-      assert_equal "overridden", child.parameters["y"]
-      assert_equal nil, child.parameters["x"]
+      as_admin do
+        child.reload
+        assert_equal "overridden", child.parameters["y"]
+        assert_equal "", child.parameters["x"]
+      end
     end
 
     it "changes the hostgroup's parent and check the parameters are updated" do

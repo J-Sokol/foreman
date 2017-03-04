@@ -8,13 +8,20 @@ module Foreman::Controller::Parameters::KeepParam
   def keep_param(params, top_level_hash, *keys)
     # Delete keys being kept from the `params` hash, so the block yielded to filters the others
     old_params = keys.inject({}) do |op,(key,val)|
-      params[top_level_hash].has_key?(key) ? op.update(key => params[top_level_hash].delete(key)) : op
+      if params[top_level_hash].has_key?(key)
+        op[key] = params[top_level_hash].delete(key)
+        op[key].permit! if op[key].is_a?(ActionController::Parameters)
+      end
+      op
     end
 
-    # Restore the deleted (kept) keys to the filtered hash of params from the block
-    filtered = yield.update(old_params)
-    # Restore the deleted (kept) keys to the original params hash so it remains unchanged
-    params[top_level_hash].update old_params
+    filtered = yield
+    old_params.each do |key,val|
+      # Restore the deleted (kept) keys to the filtered hash of params from the block
+      filtered[key] = val
+      # Restore the deleted (kept) keys to the original params hash so it remains unchanged
+      params[top_level_hash][key] = val
+    end
     filtered
   end
 end

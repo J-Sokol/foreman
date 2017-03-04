@@ -54,7 +54,7 @@ module Foreman #:nodoc:
         plugin = new(id)
         if (gem = Gem.loaded_specs[id.to_s])
           plugin.name gem.name
-          plugin.author gem.authors.join(',')
+          plugin.author gem.authors.to_sentence
           plugin.description gem.description
           plugin.url gem.homepage
           plugin.version gem.version.to_s
@@ -92,7 +92,8 @@ module Foreman #:nodoc:
     end
 
     def_field :name, :description, :url, :author, :author_url, :version, :path
-    attr_reader :id, :logging, :default_roles, :provision_methods, :compute_resources, :to_prepare_callbacks, :permissions
+    attr_reader :id, :logging, :default_roles, :provision_methods, :compute_resources, :to_prepare_callbacks,
+                :permissions, :facets
 
     def initialize(id)
       @id = id.to_sym
@@ -194,7 +195,7 @@ module Foreman #:nodoc:
     #                       :onlyif => Proc.new { |subject| subject.should_show_pagelet? }
     # end
     def extend_page(virtual_path, &block)
-      yield Pagelets::Manager.new(virtual_path) if block_given?
+      Pagelets::Manager.with_key(virtual_path, &block) if block_given?
     end
 
     def tests_to_skip(hash)
@@ -336,7 +337,9 @@ module Foreman #:nodoc:
     end
 
     def register_facet(klass, name, &block)
-      Facets.register(klass, name, &block)
+      # Save the entry in case of reloading
+      @facets ||= []
+      @facets << Facets.register(klass, name, &block)
     end
 
     def in_to_prepare(&block)

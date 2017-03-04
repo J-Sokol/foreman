@@ -21,10 +21,10 @@ class ReportTest < ActiveSupport::TestCase
 
   describe '.my_reports' do
     setup do
-      @target_host = FactoryGirl.create(:host, :with_hostgroup)
-      @target_reports = FactoryGirl.create_pair(:config_report, host: @target_host)
-      @other_host = FactoryGirl.create(:host, :with_hostgroup)
-      @other_reports = FactoryGirl.create_pair(:report, host: @other_host)
+      @target_host = FactoryGirl.create(:host, :with_hostgroup, :with_reports, :report_count => 2)
+      @target_reports = @target_host.reports
+      @other_host = FactoryGirl.create(:host, :with_hostgroup, :with_reports, :report_count => 2)
+      @other_reports = @other_host.reports
     end
 
     test 'returns all reports for admin' do
@@ -41,11 +41,9 @@ class ReportTest < ActiveSupport::TestCase
     end
 
     test 'returns visible reports for filtered user' do
-      user_role = FactoryGirl.create(:user_user_role)
-      FactoryGirl.create(:filter, :role => user_role.role, :permissions => Permission.where(:name => 'view_hosts'), :search => "hostgroup_id = #{@target_host.hostgroup_id}")
-      as_user user_role.owner do
-        assert_equal @target_reports.map(&:id).sort, Report.my_reports.map(&:id).sort
-      end
+      setup_user('view', 'hosts',
+                 "hostgroup_id = #{@target_host.hostgroup_id}")
+      assert_equal @target_reports.map(&:id).sort, Report.my_reports.map(&:id).sort
     end
 
     test "only return reports from host in user's taxonomies" do

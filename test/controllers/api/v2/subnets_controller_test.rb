@@ -20,23 +20,23 @@ class Api::V2::SubnetsControllerTest < ActionController::TestCase
   end
 
   test "should create IPv4 subnet" do
-    assert_difference('Subnet.count') do
+    assert_difference('Subnet.unscoped.count') do
       post :create, { :subnet => valid_v4_attrs }
     end
     assert_response :created
   end
 
   test "should create IPv4 subnet if type is not defined" do
-    assert_difference('Subnet.count') do
+    assert_difference('Subnet.unscoped.count') do
       post :create, { :subnet => valid_v4_attrs.reject {|k, v| k == :network_type} }
     end
-    subnet = Subnet.find_by_name(valid_v4_attrs[:name])
+    subnet = Subnet.unscoped.find_by_name(valid_v4_attrs[:name])
     assert_equal valid_v4_attrs[:network_type], subnet.network_type
     assert_response :created
   end
 
   test "should create IPv6 subnet" do
-    assert_difference('Subnet.count') do
+    assert_difference('Subnet.unscoped.count') do
       post :create, { :subnet => valid_v6_attrs }
     end
     assert_response :created
@@ -58,14 +58,14 @@ class Api::V2::SubnetsControllerTest < ActionController::TestCase
   end
 
   test "should destroy subnets" do
-    assert_difference('Subnet.count', -1) do
+    assert_difference('Subnet.unscoped.count', -1) do
       delete :destroy, { :id => subnets(:four).to_param }
     end
     assert_response :success
   end
 
   test "should NOT destroy subnet that is in use" do
-    assert_difference('Subnet.count', 0) do
+    assert_difference('Subnet.unscoped.count', 0) do
       delete :destroy, { :id => subnets(:one).to_param }
     end
     assert_response :unprocessable_entity
@@ -134,5 +134,42 @@ class Api::V2::SubnetsControllerTest < ActionController::TestCase
     subnet_with_parameter = FactoryGirl.create(:subnet_ipv4, :with_parameter)
     get :show, {:id => subnet_with_parameter.to_param, :format => 'json'}
     assert_not_empty JSON.parse(response.body)['parameters']
+  end
+
+  context 'hidden parameters' do
+    test "should show a subnet parameter as hidden unless show_hidden_parameters is true" do
+      subnet = FactoryGirl.create(:subnet_ipv4)
+      subnet.subnet_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => subnet.id }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal '*****', show_response['parameters'].first['value']
+    end
+
+    test "should show a subnet parameter as unhidden when show_hidden_parameters is true" do
+      subnet = FactoryGirl.create(:subnet_ipv4)
+      subnet.subnet_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => subnet.id, :show_hidden_parameters => 'true' }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal 'bar', show_response['parameters'].first['value']
+    end
+  end
+
+  test "should update existing subnet parameters" do
+    subnet = FactoryGirl.create(:subnet_ipv4)
+    param_params = { :name => "foo", :value => "bar" }
+    subnet.subnet_parameters.create!(param_params)
+    put :update, { :id => subnet.id, :subnet => { :subnet_parameters_attributes => [{ :name => param_params[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert param_params[:name], subnet.parameters.first.name
+  end
+
+  test "should delete existing subnet parameters" do
+    subnet = FactoryGirl.create(:subnet_ipv4)
+    param_1 = { :name => "foo", :value => "bar" }
+    param_2 = { :name => "boo", :value => "test" }
+    subnet.subnet_parameters.create!([param_1, param_2])
+    put :update, { :id => subnet.id, :subnet => { :subnet_parameters_attributes => [{ :name => param_1[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert_equal 1, subnet.parameters.count
   end
 end

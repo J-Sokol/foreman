@@ -31,6 +31,7 @@ Foreman::Application.routes.draw do
         put 'toggle_manage'
         post 'environment_selected'
         put 'power'
+        get 'power', :to => 'hosts#get_power_state'
         get 'console'
         get 'overview'
         get 'bmc'
@@ -116,12 +117,19 @@ Foreman::Application.routes.draw do
       end
     end
 
-    [:lookup_keys, :variable_lookup_keys, :puppetclass_lookup_keys].each do |key|
+    [:lookup_keys, :puppetclass_lookup_keys].each do |key|
       resources key, :except => [:show, :new, :create] do
         resources :lookup_values, :only => [:index, :create, :update, :destroy]
         collection do
           get 'auto_complete_search'
         end
+      end
+    end
+
+    resources :variable_lookup_keys, :except => [:show] do
+      resources :lookup_values, :only => [:index, :create, :update, :destroy]
+      collection do
+        get 'auto_complete_search'
       end
     end
 
@@ -141,6 +149,11 @@ Foreman::Application.routes.draw do
     end
   end
   resources :common_parameters, :except => [:show] do
+    collection do
+      get 'auto_complete_search'
+    end
+  end
+  resources :parameters, :only => [:index] do
     collection do
       get 'auto_complete_search'
     end
@@ -318,6 +331,7 @@ Foreman::Application.routes.draw do
           get 'clone_template'
           get 'lock'
           get 'unlock'
+          get 'export'
           post 'preview'
         end
         collection do
@@ -332,6 +346,7 @@ Foreman::Application.routes.draw do
           get 'clone_template'
           get 'lock'
           get 'unlock'
+          get 'export'
           post 'preview'
         end
         collection do
@@ -384,6 +399,7 @@ Foreman::Application.routes.draw do
           get 'resource_pools'
           post 'ping'
           put 'associate'
+          put 'refresh_cache'
         end
         constraints(:id => /[^\/]+/) do
           resources :vms, :controller => "compute_resources_vms" do
@@ -401,6 +417,7 @@ Foreman::Application.routes.draw do
           put 'test_connection'
         end
         resources :images, :except => [:show]
+        resources :key_pairs, :except => [:new, :edit, :update]
       end
 
       resources :realms, :except => [:show] do
@@ -498,4 +515,6 @@ Foreman::Application.routes.draw do
       get :random_name
     end
   end
+
+  resources :notification_recipients, :only => [:index, :update, :destroy]
 end

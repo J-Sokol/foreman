@@ -29,7 +29,7 @@ class UsersController < ApplicationController
   def edit
     editing_self?
     @user = find_resource(:edit_users)
-    (MailNotification.authorized_as(@user, :view_mail_notifications).subscriptable - @user.mail_notifications).each do |mail_notification|
+    (MailNotification.authorized_as(@user, :view_mail_notifications).subscriptable - @user.mail_notifications).sort_by(&:name).each do |mail_notification|
       @user.user_mail_notifications.build(:mail_notification_id => mail_notification.id)
     end
   end
@@ -124,12 +124,12 @@ class UsersController < ApplicationController
 
   def test_mail
     begin
-      if params[:user_email].blank?
+      user = find_resource(:edit_users)
+      if (params.has_key?(:user_email) && params[:user_email].blank?) || user.mail.blank?
         render :json => {:message => _("Email address is missing")}, :status => :unprocessable_entity
         return
       end
-      user = find_resource(:edit_users)
-      MailNotification[:tester].deliver(:user => user, :email => params[:user_email])
+      MailNotification[:tester].deliver(:user => user, :email => params[:user_email] || user.mail)
     rescue => e
       Foreman::Logging.exception("Unable to send email", e)
       render :json => {:message => _("Unable to send email, check server logs for more information")}, :status => :unprocessable_entity
@@ -158,7 +158,7 @@ class UsersController < ApplicationController
   end
 
   def verify_active_session
-    if !request.post? && params[:status].blank? && User.exists?(session[:user].presence)
+    if !request.post? && params[:status].blank? && User.unscoped.exists?(session[:user].presence)
       warning _("You have already logged in")
       redirect_back_or_to hosts_path
       return

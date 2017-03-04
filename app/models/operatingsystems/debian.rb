@@ -17,6 +17,10 @@ class Debian < Operatingsystem
     super(medium, architecture, host).each{ |img_uri| img_uri.path = img_uri.path.gsub('x86_64','amd64') }
   end
 
+  def available_loaders
+    self.class.all_loaders
+  end
+
   def pxe_type
     "preseed"
   end
@@ -32,16 +36,12 @@ class Debian < Operatingsystem
 
   def self.shorten_description(description)
     return "" if description.blank?
-    s=description
+    s = description.dup
     s.gsub!('GNU/Linux','')
     s.gsub!(/\(.+?\)/,'')
     s.squeeze! " "
     s.strip!
     s.blank? ? description : s
-  end
-
-  def self.model_name
-    superclass.model_name
   end
 
   private

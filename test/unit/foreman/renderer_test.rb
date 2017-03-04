@@ -51,9 +51,17 @@ class RendererTest < ActiveSupport::TestCase
     end
   end
 
+  describe "yast_attributes" do
+    test "does not fail if @host does not have medium" do
+      @renderer.host = FactoryGirl.build(:host)
+      @renderer.send :yast_attributes
+      assert_nil @renderer.instance_variable_get('@mediapath')
+    end
+  end
+
   test '#foreman_url can be rendered even outside of controller context' do
     assert_nothing_raised do
-      assert_match /\/unattended\/built/, @renderer.foreman_url
+      assert_match /\/unattended\/built/, @renderer.foreman_url('built')
     end
   end
 
@@ -94,6 +102,26 @@ class RendererTest < ActiveSupport::TestCase
         assert Setting[:safemode_render] == false
       else
         assert Setting[:safemode_render] == true
+      end
+    end
+
+    test "#{renderer_name} should raise renderer syntax error on syntax error" do
+      send "setup_#{renderer_name}"
+      template = <<EOS
+line 1: ok
+line 2: ok
+line 3: <%= 1 + %>
+line 4: ok
+EOS
+      @renderer.instance_variable_set '@template_name', 'my_template'
+      exception = assert_raises Foreman::Renderer::SyntaxError do
+        @renderer.render_safe(template, [], {})
+      end
+      if renderer_name == :normal_renderer
+        assert_include exception.message, 'my_template:3' if ERB.method_defined?(:location=)
+        assert_include exception.message, "syntax error, unexpected ')'"
+      else
+        assert_include exception.message, 'parse error on value ")"'
       end
     end
 
@@ -159,6 +187,55 @@ class RendererTest < ActiveSupport::TestCase
       assert_equal 'content', tmpl
     end
 
+    test "#{renderer_name} should render a snippet with variables" do
+      send "setup_#{renderer_name}"
+      snippet = FactoryGirl.create(:provisioning_template, :snippet, :template => "A <%= @b + ' ' + @c -%> D")
+      tmpl = @renderer.snippet(snippet.name, :variables => { :b => 'B', :c => 'C' })
+      assert_equal 'A B C D', tmpl
+    end
+
+    test "#{renderer_name} should render a snippet_if_exists with variables" do
+      send "setup_#{renderer_name}"
+      snippet = FactoryGirl.create(:provisioning_template, :snippet, :template => "A <%= @b + ' ' + @c -%> D")
+      tmpl = @renderer.snippet_if_exists(snippet.name, :variables => { :b => 'B', :c => 'C' })
+      assert_equal 'A B C D', tmpl
+    end
+
+    test "#{renderer_name} should render a snippets with variables" do
+      send "setup_#{renderer_name}"
+      snippet = FactoryGirl.create(:provisioning_template, :snippet, :template => "A <%= @b + ' ' + @c -%> D")
+      tmpl = @renderer.snippets(snippet.name, :variables => { :b => 'B', :c => 'C' })
+      assert_equal 'A B C D', tmpl
+    end
+
+    test "#{renderer_name} should render a save_to_file macro" do
+      assert_renders('<%= save_to_file("/etc/puppet/puppet.conf", "[main]\nserver=example.com\n") %>', "cat << EOF > /etc/puppet/puppet.conf\n[main]\nserver=example.com\nEOF", nil)
+    end
+
+    test "#{renderer_name} should define passed variables only in snippet scope" do
+      send "setup_#{renderer_name}"
+      level2_snippet = FactoryGirl.create(:provisioning_template, :snippet, :template => "<%= @level2 -%>")
+      level1_snippet = FactoryGirl.create(:provisioning_template, :snippet, :template => "<%= @level1 -%><%= snippet('#{level2_snippet.name}', :variables => {:level2 => 2}) %><%= @level2 %>")
+      tmpl = @renderer.render_safe("<%= snippet('#{level1_snippet.name}', :variables => {:level1 => 1}) -%><%= @level1 %>", [:snippet])
+
+      assert_equal '12', tmpl
+    end
+
+    test "#{renderer_name} should render a templates_used" do
+      send "setup_#{renderer_name}"
+      @renderer.host = FactoryGirl.build(
+        :host,
+        :operatingsystem => operatingsystems(:redhat)
+      )
+      template = mock('template')
+      template.stubs(:template).returns('<%= @host.templates_used %>')
+      assert_nothing_raised do
+        content = @renderer.unattended_render(template)
+        assert_match(/#{@renderer.host.provisioning_template(:kind => 'provision')}/, content)
+        assert_match(/#{@renderer.host.provisioning_template(:kind => 'script')}/, content)
+      end
+    end
+
     test "#{renderer_name} should not raise error when snippet is not found" do
       send "setup_#{renderer_name}"
       Template.expects(:where).with(:name => "test", :snippet => true).returns([])
@@ -220,5 +297,54 @@ class RendererTest < ActiveSupport::TestCase
   test '#allowed_variables_mapping loads instance variables' do
     @renderer.instance_variable_set '@whatever_random_name', 'has_value'
     assert_equal({ :whatever_random_name => 'has_value' }, @renderer.send(:allowed_variables_mapping, [ :whatever_random_name ]))
+  end
+
+  test 'should render puppetclasses using host_puppetclasses helper' do
+    @renderer.host = FactoryGirl.create(:host, :with_puppetclass)
+    assert @renderer.host_puppet_classes
+  end
+
+  test 'should render host param using "host_param" helper' do
+    @renderer.host = FactoryGirl.create(:host, :with_puppet)
+    assert @renderer.host_param('test').present?
+  end
+
+  test 'should have host_param_true? helper' do
+    @renderer.host = FactoryGirl.create(:host, :with_puppet)
+    FactoryGirl.create(:parameter, :name => 'true_param', :value => "true")
+    assert @renderer.host_param_true?('true_param')
+  end
+
+  test 'should have host_param_false? helper' do
+    @renderer.host = FactoryGirl.create(:host, :with_puppet)
+    FactoryGirl.create(:parameter, :name => 'false_param', :value => "false")
+    assert @renderer.host_param_false?('false_param')
+  end
+
+  test 'should have host_enc helper' do
+    @renderer.host = FactoryGirl.create(:host, :with_puppet)
+    assert @renderer.host_enc
+  end
+
+  test "should find path in host_enc" do
+    host = FactoryGirl.create(:host, :with_puppet)
+    @renderer.host = host
+    assert_equal host.puppetmaster, @renderer.host_enc('parameters', 'puppetmaster')
+  end
+
+  test 'templates_used is allowed to render for host' do
+    assert Safemode.find_jail_class(Host::Managed).allowed? :templates_used
+  end
+
+  private
+
+  def assert_renders(template_content, output, host)
+    @renderer.host = host
+    template = mock('template')
+    template.stubs(:template).returns(template_content)
+    assert_nothing_raised do
+      content = @renderer.unattended_render(template)
+      assert_equal(output, content)
+    end
   end
 end

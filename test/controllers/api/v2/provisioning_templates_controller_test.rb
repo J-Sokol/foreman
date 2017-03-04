@@ -53,7 +53,7 @@ class Api::V2::ProvisioningTemplatesControllerTest < ActionController::TestCase
     provisioning_template = templates(:pxekickstart)
     delete :destroy, { :id => provisioning_template.to_param }
     assert_response 422
-    assert ProvisioningTemplate.exists?(provisioning_template.id)
+    assert ProvisioningTemplate.unscoped.exists?(provisioning_template.id)
   end
 
   test "should destroy" do
@@ -61,7 +61,7 @@ class Api::V2::ProvisioningTemplatesControllerTest < ActionController::TestCase
     provisioning_template.os_default_templates.clear
     delete :destroy, { :id => provisioning_template.to_param }
     assert_response :ok
-    refute ProvisioningTemplate.exists?(provisioning_template.id)
+    refute ProvisioningTemplate.unscoped.exists?(provisioning_template.id)
   end
 
   test "should build pxe menu" do
@@ -94,6 +94,14 @@ class Api::V2::ProvisioningTemplatesControllerTest < ActionController::TestCase
     post :clone, { :id => templates(:pxekickstart).to_param,
                    :provisioning_template => {:name => ''} }
     assert_response :unprocessable_entity
+  end
+
+  test 'export should export the erb of the template' do
+    get :export, { :id => templates(:pxekickstart).to_param }
+    assert_response :success
+    assert_equal 'text/plain', response.content_type
+    assert_equal templates(:pxekickstart).to_erb, response.body
+    assert_equal 'attachment; filename="centos5_3_pxelinux.erb"', response.headers['Content-Disposition']
   end
 
   test "should show templates from os" do

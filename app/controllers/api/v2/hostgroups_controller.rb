@@ -4,9 +4,11 @@ module Api
       include Api::Version2
       include Api::TaxonomyScope
       include Foreman::Controller::Parameters::Hostgroup
+      include ParameterAttributes
 
       before_action :find_optional_nested_object
       before_action :find_resource, :only => %w{show update destroy clone}
+      before_action :process_parameter_attributes, :only => %w{update}
 
       api :GET, "/hostgroups/", N_("List all host groups")
       api :GET, "/puppetclasses/:puppetclass_id/hostgroups", N_("List all host groups for a Puppet class")
@@ -22,6 +24,7 @@ module Api
 
       api :GET, "/hostgroups/:id/", N_("Show a host group")
       param :id, :identifier, :required => true
+      param :show_hidden_parameters, :bool, :desc => N_("Display hidden parameter values")
 
       def show
       end
@@ -40,6 +43,11 @@ module Api
           param :subnet_id, :number, :desc => N_('Subnet ID')
           param :domain_id, :number, :desc => N_('Domain ID')
           param :realm_id, :number, :desc => N_('Realm ID')
+          param :config_group_ids, Array, :desc => N_("IDs of associated config groups")
+          param :group_parameters_attributes, Array, :required => false, :desc => N_("Array of parameters")  do
+            param :name, String, :desc => N_("Name of the parameter"), :required => true
+            param :value, String, :desc => N_("Parameter value"), :required => true
+          end
           Hostgroup.registered_smart_proxies.each do |name, options|
             param :"#{name}_id", :number, :desc => options[:api_description]
           end
@@ -53,6 +61,8 @@ module Api
 
       def create
         @hostgroup = Hostgroup.new(hostgroup_params)
+        @hostgroup.suggest_default_pxe_loader if params[:hostgroup] && params[:hostgroup][:pxe_loader].nil?
+
         process_response @hostgroup.save
       end
 

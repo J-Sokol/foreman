@@ -163,40 +163,28 @@ class OrganizationsControllerTest < ActionController::TestCase
     assert_response :success
     assert_match "Clone", @response.body
   end
-  test "should clone organization with assocations" do
+  test "should clone organization with associations" do
     organization = taxonomies(:organization1)
+    organization.locations << taxonomies(:location1)
     FactoryGirl.create(:host, :organization => nil)
     organization_dup = organization.clone
 
-    assert_difference "Organization.count", 1 do
-      post :create, {:organization => {:name => "organization_dup_name",
-                                       :environment_ids => organization_dup.environment_ids,
-                                       :hostgroup_ids => organization_dup.hostgroup_ids,
-                                       :subnet_ids => organization_dup.hostgroup_ids,
-                                       :domain_ids => organization_dup.domain_ids,
-                                       :medium_ids => organization_dup.medium_ids,
-                                       :user_ids => organization_dup.user_ids,
-                                       :smart_proxy_ids => organization_dup.smart_proxy_ids,
-                                       :provisioning_template_ids => organization_dup.provisioning_template_ids,
-                                       :compute_resource_ids => organization_dup.compute_resource_ids,
-                                       :location_ids => organization_dup.location_ids
-      }
+    assert_difference "Organization.unscoped.count", 1 do
+      post :create, {
+        :organization => organization_dup.selected_ids.each { |_,v| v.uniq! }
+          .merge(:name => 'organization_dup_name')
       }, set_session_user
     end
 
     new_organization = Organization.unscoped.order(:id).last
     assert_redirected_to :controller => :organizations, :action => :step2, :id => new_organization.to_param
 
-    assert_equal new_organization.environment_ids.sort, organization.environment_ids.sort
-    assert_equal new_organization.hostgroup_ids.sort, organization.hostgroup_ids.sort
-    assert_equal new_organization.environment_ids.sort, organization.environment_ids.sort
-    assert_equal new_organization.domain_ids.sort, organization.domain_ids.sort
-    assert_equal new_organization.medium_ids.sort, organization.medium_ids.sort
-    assert_equal new_organization.user_ids.sort, organization.user_ids.sort
-    assert_equal new_organization.smart_proxy_ids.sort, organization.smart_proxy_ids.sort
-    assert_equal new_organization.provisioning_template_ids.sort, organization.provisioning_template_ids.sort
-    assert_equal new_organization.compute_resource_ids.sort, organization.compute_resource_ids.sort
-    assert_equal new_organization.location_ids.sort, organization.location_ids.sort
+    as_admin do
+      [:environment_ids, :hostgroup_ids, :environment_ids, :domain_ids, :medium_ids, :user_ids, :smart_proxy_ids, :provisioning_template_ids, :compute_resource_ids, :location_ids].each do |association|
+        assert new_organization.public_send(association).present?, "missing #{association}"
+        assert_equal organization.public_send(association).uniq.sort, new_organization.public_send(association).uniq.sort, "#{association} is different"
+      end
+    end
   end
 
   test "should clear out Organization.current" do
@@ -231,6 +219,16 @@ class OrganizationsControllerTest < ActionController::TestCase
     assert_nil response.body['Parameter']
   end
 
+  test 'should allow empty array as param value of array field while updating organization' do
+    organization = taxonomies(:organization2)
+    organization.update_attributes(:smart_proxy_ids => [ smart_proxies(:one).id ])
+    saved_organization = Organization.find_by_id(organization.id)
+    assert_equal 1, saved_organization.smart_proxy_ids.count
+    put :update, { :id => organization.id, :organization => {:smart_proxy_ids => [""]}}, set_session_user
+    updated_organization = Organization.find_by_id(organization.id)
+    assert_equal 0, updated_organization.smart_proxy_ids.count
+  end
+
   context 'wizard' do
     test 'redirects to step 2 if unassigned hosts exist' do
       host = FactoryGirl.create(:host)
@@ -262,5 +260,12 @@ class OrganizationsControllerTest < ActionController::TestCase
       assert_redirected_to /edit/
       Host.unstub(:authorized)
     end
+  end
+
+  test 'should switch to newly created org' do
+    name = 'test-org'
+    put :create, { :commit => "Submit", :organization => { :name => name } }, set_session_user
+    new_org = Organization.find_by :name => name
+    assert_equal new_org.id, session[:organization_id]
   end
 end

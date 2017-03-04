@@ -91,7 +91,7 @@ class Api::V2::ParametersControllerTest < ActionController::TestCase
   end
 
   test "should show an organization parameter" do
-    get :show, { :organization_id => taxonomies(:organization1).to_param, :id => parameters(:org).to_param }
+    get :show, { :organization_id => taxonomies(:organization1).to_param, :id => parameters(:organization).to_param }
     assert_response :success
     show_response = ActiveSupport::JSON.decode(@response.body)
     assert_not_empty show_response
@@ -157,31 +157,36 @@ class Api::V2::ParametersControllerTest < ActionController::TestCase
   test "should update nested host parameter" do
     put :update, { :host_id => @host.to_param, :id => @host.parameters.first.to_param, :parameter => valid_attrs }
     assert_response :success
-    assert_equal '123', Host.find_by_name(@host.name).parameters.order("parameters.updated_at").last.value
+    assert_equal '123', Host.unscoped.find_by_name(@host.name).parameters.
+      order("parameters.updated_at").last.value
   end
 
   test "should update nested domain parameter" do
     put :update, { :domain_id => domains(:mydomain).to_param, :id => parameters(:domain).to_param, :parameter => valid_attrs }
     assert_response :success
-    assert_equal Domain.find_by_name("mydomain.net").parameters.order("parameters.updated_at").last.value, "123"
+    assert_equal Domain.unscoped.find_by_name("mydomain.net").parameters.
+      order("parameters.updated_at").last.value, "123"
   end
 
   test "should update nested subnet parameter" do
     put :update, { :subnet_id => subnets(:five).to_param, :id => parameters(:subnet).to_param, :parameter => valid_attrs }
     assert_response :success
-    assert_equal Subnet.find_by_name("five").parameters.order("parameters.updated_at").last.value, "123"
+    assert_equal Subnet.unscoped.find_by_name("five").parameters.
+      order("parameters.updated_at").last.value, "123"
   end
 
   test "should update nested hostgroup parameter" do
     put :update, { :hostgroup_id => hostgroups(:common).to_param, :id => parameters(:group).to_param, :parameter => valid_attrs }
     assert_response :success
-    assert_equal Hostgroup.find_by_name("Common").group_parameters.order("parameters.updated_at").last.value, "123"
+    assert_equal Hostgroup.unscoped.find_by_name("Common").group_parameters.
+      order("parameters.updated_at").last.value, "123"
   end
 
   test "should update nested os parameter" do
     put :update, { :operatingsystem_id => operatingsystems(:redhat).to_param, :id => parameters(:os).to_param, :parameter => valid_attrs }
     assert_response :success
-    assert_equal Operatingsystem.find_by_name("Redhat").parameters.order("parameters.updated_at").last.value, "123"
+    assert_equal Operatingsystem.unscoped.find_by_name("Redhat").parameters.
+      order("parameters.updated_at").last.value, "123"
   end
 
   test "should destroy nested host parameter" do
@@ -290,15 +295,43 @@ class Api::V2::ParametersControllerTest < ActionController::TestCase
     test 'user with permissions to view host can also view its parameters' do
       setup_user 'view', 'params'
       setup_user 'view', 'hosts', "name = #{@host.name}"
-      get :index, { :host_id => @host.name }, set_session_user
+      get :index, { :host_id => @host.name }, set_session_user(:one)
       assert_response :success
     end
 
     test 'user without permissions to view host cannot view parameters' do
       setup_user 'view', 'params'
       setup_user 'view', 'hosts', "name = some.other.host"
-      get :index, { :host_id => @host.name }, set_session_user
+      get :index, { :host_id => @host.name }, set_session_user(:one)
       assert_response :not_found
+    end
+  end
+
+  context 'hidden' do
+    test "should show a host parameter as hidden unless show_hidden is true" do
+      parameter = FactoryGirl.create(:host_parameter, :host => @host, :hidden_value => true)
+      get :show, { :host_id => @host.to_param, :id => parameter.to_param }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal parameter.hidden_value, show_response['value']
+    end
+
+    test "should show a host parameter unhidden when show_hidden is true" do
+      setup_user 'view', 'params'
+      setup_user 'edit', 'params'
+      setup_user 'view', 'hosts', "name = #{@host.name}"
+      parameter = FactoryGirl.create(:host_parameter, :host => @host, :hidden_value => true)
+      get :show, { :host_id => @host.to_param, :id => parameter.to_param, :show_hidden => 'true' }, set_session_user(:one)
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal parameter.value, show_response['value']
+    end
+
+    test "should show a host parameter as hidden even when show_hidden is true if user is not authorized" do
+      setup_user 'view', 'params'
+      setup_user 'view', 'hosts', "name = #{@host.name}"
+      parameter = FactoryGirl.create(:host_parameter, :host => @host, :hidden_value => true)
+      get :show, { :host_id => @host.to_param, :id => parameter.to_param, :show_hidden => 'true' }, set_session_user(:one)
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal parameter.hidden_value, show_response['value']
     end
   end
 end

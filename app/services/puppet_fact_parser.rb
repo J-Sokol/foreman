@@ -2,7 +2,7 @@ class PuppetFactParser < FactParser
   attr_reader :facts
 
   def operatingsystem
-    orel = os_release
+    orel = os_release.dup
 
     if os_name == "Archlinux"
       # Archlinux is rolling release, so it has no release. We use 1.0 always
@@ -26,10 +26,12 @@ class PuppetFactParser < FactParser
         orel = majorjunos + "." + minorjunos
       elsif os_name[/FreeBSD/i]
         orel.gsub!(/\-RELEASE\-p[0-9]+/, '')
+      elsif os_name[/Solaris/i]
+        orel.gsub!(/_u/, '.')
       end
       major, minor = orel.split('.', 2)
-      major.to_s.gsub!(/\D/, '')
-      minor.to_s.gsub!(/[^\d\.]/, '')
+      major = major.to_s.gsub(/\D/, '')
+      minor = minor.to_s.gsub(/[^\d\.]/, '')
       args = {:name => os_name, :major => major, :minor => minor}
       os = Operatingsystem.find_or_initialize_by(args)
       os.release_name = facts[:lsbdistcodename] if facts[:lsbdistcodename] && (os_name[/debian|ubuntu/i] || os.family == 'Debian')
@@ -38,14 +40,20 @@ class PuppetFactParser < FactParser
     end
     if os.description.blank?
       if os_name == 'SLES'
-        os.description = os_name + ' ' + orel.gsub!('.', ' SP')
+        os.description = os_name + ' ' + orel.gsub('.', ' SP')
       elsif facts[:lsbdistdescription]
         family = os.deduce_family || 'Operatingsystem'
         os.description = family.constantize.shorten_description facts[:lsbdistdescription]
       end
     end
-    os.save!
-    os
+
+    if os.new_record?
+      os.save!
+      Operatingsystem.find_by_id(os.id) # complete reload to be an instance of the STI subclass
+    else
+      os.save!
+      os
+    end
   end
 
   def environment

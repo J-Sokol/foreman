@@ -21,8 +21,6 @@
 //= require editable/bootstrap-editable
 //= require editable/rails
 
-$(document).on('ContentLoad', onContentLoad);
-
 $(document).on("page:fetch", tfm.tools.showSpinner)
 
 $(document).on("page:change", tfm.tools.hideSpinner)
@@ -65,20 +63,14 @@ function onContentLoad(){
   // highlight tabs with errors
   var errorFields = $(".tab-content .has-error");
   errorFields.parents(".tab-pane").each(function() {
-      $("a[href=#"+this.id+"]").addClass("tab-error");
+    $('a[href="#'+this.id+'"]').addClass("tab-error");
   })
   $(".tab-error").first().click();
   $('.nav-pills .tab-error').first().click();
   errorFields.first().find('.form-control').focus();
 
-
-  //set the tooltips
   $('a[rel="popover"]').popover();
-  $('[rel="twipsy"]').tooltip({ container: 'body' });
-  $('.ellipsis').tooltip({ container: 'body',
-                           title: function(){return (this.scrollWidth > this.clientWidth) ? this.textContent : null;}
-                        });
-  $('*[title]').not('*[rel]').tooltip({ container: 'body' });
+  tfm.tools.activateTooltips();
   tfm.tools.activateDatatables();
 
   // Prevents all links with the disabled attribute set to "disabled"
@@ -154,7 +146,9 @@ function check_caps_lock(key, e) {
 
 function remove_fields(link) {
   $(link).prev("input[type=hidden]").val("1");
-  $(link).closest(".fields").hide();
+  var $field_row = $(link).closest(".fields");
+  $field_row.next("tr.error-msg-block").hide();
+  $field_row.hide();
   mark_params_override();
 }
 
@@ -336,11 +330,6 @@ function ignore_subnet(item){
  $(item).closest('.accordion-group').remove();
 }
 
-function show_rdoc(item){
-  var url = $(item).attr('data-url');
-  window.open(url);
-}
-
 // shows provisioning templates in a new window
 $(function() {
   $('[data-provisioning-template=true]').click(function(){
@@ -369,7 +358,8 @@ function update_puppetclasses(element) {
     success: function(request) {
       $('#puppet_klasses').html(request);
       reload_puppetclass_params();
-      $('[rel="twipsy"]').tooltip();
+      tfm.tools.activateTooltips();
+      tfm.hostgroups.checkForUnavailablePuppetclasses();
     },
     complete: function() {
       reloadOnAjaxComplete(element);
@@ -438,7 +428,7 @@ function setPowerState(item, status){
     loading_power_state.text(__('Unknown power state'));
   }
   power_actions.hide();
-  $('[rel="twipsy"]').tooltip();
+  tfm.tools.activateTooltips();
 }
 
 function toggle_input_group(item) {
@@ -455,7 +445,7 @@ function toggle_input_group(item) {
 
 function reloadOnAjaxComplete(element) {
   tfm.tools.hideSpinner()
-  $('[rel="twipsy"]').tooltip();
+  tfm.tools.activateTooltips();
   activate_select2(':root');
 }
 

@@ -113,7 +113,7 @@ class UserTest < ActiveSupport::TestCase
       user = users(:internal)
       last_login = user.last_login_on
       assert_not_nil User.try_to_login(user.login, "changeme")
-      assert_not_equal last_login, User.find(user.id).last_login_on
+      assert_not_equal last_login, User.unscoped.find(user.id).last_login_on
     end
 
     test "updating the last login time must not persist invalid attributes" do
@@ -121,7 +121,7 @@ class UserTest < ActiveSupport::TestCase
       AuthSourceLdap.any_instance.expects(:authenticate).returns(:mail => 'foo#bar')
       AuthSourceLdap.any_instance.stubs(:update_usergroups).returns(true)
       assert_not_nil User.try_to_login(user.login, "changeme")
-      reloaded_user = User.find(user.id)
+      reloaded_user = User.unscoped.find(user.id)
       assert_not_equal user.last_login_on, reloaded_user.last_login_on
       assert_equal user.mail, reloaded_user.mail
     end
@@ -209,7 +209,10 @@ class UserTest < ActiveSupport::TestCase
 
   test "user with create permissions should be able to create" do
     setup_user "create"
-    record = User.new :login => "dummy", :mail => "j@j.com", :auth_source_id => AuthSourceInternal.first.id
+    record = User.new :login => "dummy", :mail => "j@j.com",
+      :auth_source_id => AuthSourceInternal.first.id,
+      :organizations => User.current.organizations,
+      :locations => User.current.locations
     record.password_hash = "asd"
     assert record.save
     assert record.valid?
@@ -243,8 +246,11 @@ class UserTest < ActiveSupport::TestCase
   test "non-admin user can delegate roles he has assigned already" do
     setup_user "create"
     create_role          = Role.find_by_name 'create_users'
-    record               = User.new :login    => "dummy", :mail => "j@j.com", :auth_source_id => AuthSourceInternal.first.id,
-                                    :role_ids => [create_role.id.to_s]
+    record               = User.new(:login => "dummy", :mail => "j@j.com",
+      :auth_source_id => AuthSourceInternal.first.id,
+      :role_ids => [create_role.id.to_s],
+      :organizations => User.current.organizations,
+      :locations => User.current.locations)
     record.password_hash = "asd"
     assert record.valid?
     assert record.save
@@ -254,8 +260,11 @@ class UserTest < ActiveSupport::TestCase
   test "admin can set admin flag and set any role" do
     as_admin do
       extra_role           = Role.where(:name => "foobar").first_or_create
-      record               = User.new :login    => "dummy", :mail => "j@j.com", :auth_source_id => AuthSourceInternal.first.id,
-                                      :role_ids => [extra_role.id].map(&:to_s)
+      record               = User.new(:login => "dummy", :mail => "j@j.com",
+                                      :auth_source_id => AuthSourceInternal.first.id,
+                                      :role_ids => [extra_role.id.to_s],
+                                      :organizations => User.current.organizations,
+                                      :locations => User.current.locations)
       record.password_hash = "asd"
       record.admin         = true
       assert record.save
@@ -320,9 +329,76 @@ class UserTest < ActiveSupport::TestCase
     assert_includes record.errors.keys, :admin
   end
 
+  context "audits for password change" do
+    def setup_user_for_audits
+      user = FactoryGirl.create(:user)
+      User.find_by_id(user.id) #to clear the value of user.password
+    end
+
+    test "audit of password change should be saved only once, second time audited changes should not contain password_changed" do
+      user = setup_user_for_audits
+      as_admin do
+        user.password = "newpassword"
+        assert_valid user
+        assert user.password_changed_changed?
+        assert user.password_changed
+        assert_includes user.changed, "password_changed"
+        assert user.save
+        assert_includes Audit.last.audited_changes, "password_changed"
+        #testing after_save
+        refute user.password_changed_changed?
+        refute user.password_changed
+        refute_includes user.changed, "password_changed"
+      end
+    end
+
+    test "audit of password change should be saved" do
+      user = setup_user_for_audits
+      as_admin do
+        user.password = "newpassword"
+        assert_valid user
+        assert user.password_changed_changed?
+        assert user.password_changed
+        assert_includes user.changed, "password_changed"
+        assert user.save
+        assert_includes Audit.last.audited_changes, "password_changed"
+      end
+    end
+
+    test "audit of password change should not be saved - due to no password change" do
+      user = setup_user_for_audits
+      as_admin do
+        user.firstname = "Johnny"
+        assert_valid user
+        refute user.password_changed_changed?
+        refute user.password_changed
+        refute_includes user.changed, "password_changed"
+        assert user.save
+        refute_includes Audit.last.audited_changes, "password_changed"
+      end
+    end
+
+    test "audit of name change sholud contain only firstname and not password_changed" do
+      user = setup_user_for_audits
+      as_admin do
+        user.firstname = "Johnny"
+        assert_valid user
+        assert_includes user.changed, "firstname"
+        refute user.password_changed_changed?
+        refute user.password_changed
+        refute_includes user.changed, "password_changed"
+        assert user.save
+        assert_includes Audit.last.audited_changes, "firstname"
+        refute_includes Audit.last.audited_changes, "password_changed"
+      end
+    end
+  end
+
   test "user can save user if he does not change roles" do
     setup_user "edit"
     record = users(:two)
+    record.organizations = User.current.organizations
+    record.locations = User.current.locations
     assert record.save
   end
 
@@ -531,14 +607,13 @@ class UserTest < ActiveSupport::TestCase
   end
 
   test "user can't set empty taxonomies set if he's assigned to some" do
-    user = FactoryGirl.create(:user)
     org1 = FactoryGirl.create(:organization)
-    user.organizations << org1
+    user = FactoryGirl.create(:user, :organizations => [org1], :locations => [])
 
-    as_user user do
+    as_user(user) do
       # empty set
-      new_user = FactoryGirl.build(:user)
-      refute new_user.save
+      new_user = FactoryGirl.build(:user, :organizations => [], :locations => [])
+      refute new_user.valid?
       assert_not_empty new_user.errors[:organization_ids]
       assert_empty new_user.errors[:location_ids]
     end
@@ -708,8 +783,8 @@ class UserTest < ActiveSupport::TestCase
   end
 
   test 'default taxonomy inclusion validator' do
-    users(:one).default_location = Location.first
-    users(:one).default_organization = Organization.first
+    users(:one).default_location = taxonomies(:location2)
+    users(:one).default_organization = taxonomies(:organization2)
 
     refute users(:one).valid?
     assert users(:one).errors.messages.has_key? :default_location
@@ -725,8 +800,8 @@ class UserTest < ActiveSupport::TestCase
 
   test "return location and child ids for non-admin user" do
     as_user :one do
+      # User 'one' contains location1 already
       in_taxonomy :location1 do
-        assert User.current.locations << Location.current
         assert child = Location.create!(:name => 'child location', :parent_id => Location.current.id)
         assert_equal [Location.current.id, child.id].sort, User.current.location_and_child_ids
       end
@@ -735,8 +810,8 @@ class UserTest < ActiveSupport::TestCase
 
   test "return organization and child ids for non-admin user" do
     as_user :one do
+      # User 'one' contains organization1 already
       in_taxonomy :organization1 do
-        assert User.current.organizations << Organization.current
         assert child = Organization.create!(:name => 'child organization', :parent_id => Organization.current.id)
         assert_equal [Organization.current.id, child.id].sort, User.current.organization_and_child_ids
       end
@@ -850,6 +925,11 @@ class UserTest < ActiveSupport::TestCase
 
     users = User.search_for("role_id = #{role.id}")
     assert (users.include? user)
+  end
+
+  test 'can search users by usergroup' do
+    user = FactoryGirl.create(:user, :with_usergroup)
+    assert_equal [user], User.search_for("usergroup = #{user.usergroups.first.name}")
   end
 
   test 'can set valid timezone' do

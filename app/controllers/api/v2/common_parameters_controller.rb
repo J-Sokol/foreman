@@ -6,13 +6,15 @@ module Api
       before_action :find_resource, :only => %w{show update destroy}
 
       api :GET, "/common_parameters/", N_("List all global parameters.")
+      param :show_hidden, :bool, :desc => N_("Display hidden values")
       param_group :search_and_pagination, ::Api::V2::BaseController
 
       def index
-        @common_parameters = resource_scope_for_index(:permission => :view_globals)
+        @common_parameters = resource_scope_for_index(:permission => :view_params)
       end
 
       api :GET, "/common_parameters/:id/", N_("Show a global parameter")
+      param :show_hidden, :bool, :desc => N_("Display hidden values")
       param :id, :identifier, :required => true
 
       def show
@@ -47,6 +49,20 @@ module Api
 
       def destroy
         process_response @common_parameter.destroy
+      end
+
+      private
+
+      def controller_permission
+        'params'
+      end
+
+      def resource_scope(*args, &block)
+        super.where(:type => 'CommonParameter')
+      end
+
+      def resource_class
+        Parameter
       end
     end
   end

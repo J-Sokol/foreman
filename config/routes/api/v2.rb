@@ -39,7 +39,10 @@ Foreman::Application.routes.draw do
       resources :provisioning_templates, :except => [:new, :edit] do
         (resources :locations, :only => [:index, :show]) if SETTINGS[:locations_enabled]
         (resources :organizations, :only => [:index, :show]) if SETTINGS[:organizations_enabled]
-        post :clone, :on => :member
+        member do
+          post :clone
+          get :export
+        end
         collection do
           post 'build_pxe_default'
           get 'revision'
@@ -146,7 +149,10 @@ Foreman::Application.routes.draw do
       resources :ptables, :except => [:new, :edit] do
         (resources :locations, :only => [:index, :show]) if SETTINGS[:locations_enabled]
         (resources :organizations, :only => [:index, :show]) if SETTINGS[:organizations_enabled]
-        post :clone, :on => :member
+        member do
+          post :clone
+          get :export
+        end
         collection do
           get 'revision'
         end
@@ -264,6 +270,7 @@ Foreman::Application.routes.draw do
           get 'available_clusters/(:cluster_id)/available_resource_pools', :to => 'compute_resources#available_resource_pools', :on => :member
           get :available_zones, :on => :member
           put :associate, :on => :member
+          put :refresh_cache, :on => :member
           (resources :locations, :only => [:index, :show]) if SETTINGS[:locations_enabled]
           (resources :organizations, :only => [:index, :show]) if SETTINGS[:organizations_enabled]
           resources :compute_attributes, :only => [:create, :update]
@@ -304,7 +311,7 @@ Foreman::Application.routes.draw do
           resources :environments, :only => [] do
             post :import_puppetclasses, :on => :member
           end
-          resources :autosign, :only => [:index]
+          resources :autosign, :only => [:index, :create, :destroy]
         end
         resources :hosts, :except => [:new, :edit] do
           get :enc, :on => :member

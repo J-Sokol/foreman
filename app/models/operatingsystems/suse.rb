@@ -1,10 +1,6 @@
 class Suse < Operatingsystem
   PXEFILES = {:kernel => "linux", :initrd => "initrd"}
 
-  class << self
-    delegate :model_name, :to => :superclass
-  end
-
   # Simple output of the media url
   def mediumpath(host)
     medium_uri(host).to_s
@@ -28,7 +24,7 @@ class Suse < Operatingsystem
 
   def self.shorten_description(description)
     return "" if description.blank?
-    s=description
+    s = description.dup
     s.gsub!('SUSE Linux Enterprise Server','SLES')
     s.gsub!(/\(.+?\)/,'')
     s.squeeze! " "

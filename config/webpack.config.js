@@ -1,11 +1,10 @@
 'use strict';
 
-require( 'es6-promise' ).polyfill(); //needed for compatibility with older node versions
-
 var path = require('path');
 var webpack = require('webpack');
 var StatsPlugin = require('stats-webpack-plugin');
 var ExtractTextPlugin = require("extract-text-webpack-plugin");
+var CompressionPlugin = require('compression-webpack-plugin');
 
 // must match config.webpack.dev_server.port
 var devServerPort = 3808;
@@ -49,6 +48,13 @@ var config = {
       {
         test: /(\.png|\.gif)$/,
         loader: "url-loader?limit=32767"
+      },
+      {
+        test: /\.scss$/,
+        loader: ExtractTextPlugin.extract(
+          'style-loader', // The backup style loader
+          'css-loader?sourceMap!sass-loader?sourceMap'
+        )
       }
     ]
   },
@@ -63,12 +69,11 @@ var config = {
       modules: false,
       assets: true
     }),
-    new webpack.ProvidePlugin({
-      $: 'jquery',
-      jQuery: 'jquery',
-    }),
     new ExtractTextPlugin(production ? '[name]-[chunkhash].css' : '[name].css', {
-            allChunks: true
+        allChunks: true
+    }),
+    new webpack.DefinePlugin({
+      'process.env': { NODE_ENV: JSON.stringify(production ? 'production' : 'development') }
     })
   ]
 };
@@ -80,11 +85,10 @@ if (production) {
       compressor: { warnings: false },
       sourceMap: false
     }),
-    new webpack.DefinePlugin({
-      'process.env': { NODE_ENV: JSON.stringify('production') }
-    }),
+    
     new webpack.optimize.DedupePlugin(),
-    new webpack.optimize.OccurenceOrderPlugin()
+    new webpack.optimize.OccurenceOrderPlugin(),
+    new CompressionPlugin()
   );
 } else {
   require('dotenv').config();

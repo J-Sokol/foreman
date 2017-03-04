@@ -98,6 +98,7 @@ module Orchestration::Compute
 
     return false if errors.any?
     logger.info "Revoked old certificates and enabled autosign for UserData"
+    true
   end
 
   def delUserData
@@ -106,6 +107,8 @@ module Orchestration::Compute
     # since we enable certificates/autosign via here, we also need to make sure we clean it up in case of an error
     if puppetca?
       respond_to?(:initialize_puppetca,true) && initialize_puppetca && delCertificate && delAutosign
+    else
+      true
     end
   rescue => e
     failure _("Failed to remove certificates for %{name}: %{e}") % { :name => name, :e => e }, e
@@ -212,8 +215,8 @@ module Orchestration::Compute
 
   def compute_update_required?
     return false unless compute_resource.supports_update? && !compute_attributes.nil?
-    old.compute_attributes = compute_resource.find_vm_by_uuid(uuid).attributes
-    compute_resource.update_required?(old.compute_attributes, compute_attributes.symbolize_keys)
+    old.compute_attributes = compute_resource.vm_compute_attributes_for(uuid)
+    compute_resource.update_required?(old.compute_attributes, compute_attributes)
   end
 
   def find_image
@@ -296,6 +299,7 @@ module Orchestration::Compute
   end
 
   def validate_foreman_attr(value, object, attr)
+    value = value.to_s if object.type_for_attribute(attr.to_s).type == :string
     # we can't ensure uniqueness of #foreman_attr using normal rails
     # validations as that gets in a later step in the process
     # therefore we must validate its not used already in our db.
@@ -327,6 +331,7 @@ module Orchestration::Compute
       mac = selected_nic.send(fog_attr)
       logger.debug "Orchestration::Compute: nic #{nic.inspect} assigned to #{selected_nic.inspect}"
       nic.mac = mac
+      nic.reset_dhcp_record_cache if nic.respond_to?(:reset_dhcp_record_cache) # delete the cached dhcp_record with old MAC on managed nics
       fog_nics.delete(selected_nic) # don't use the same fog nic twice
 
       # In future, we probably want to skip validation of macs/ips on the Nic

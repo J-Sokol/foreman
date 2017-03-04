@@ -85,7 +85,7 @@ class LookupKeyTest < ActiveSupport::TestCase
     value2 = ""
     puppetclass = Puppetclass.first
     as_admin do
-      key    = PuppetclassLookupKey.create!(:key => "dns", :path => "environment,hostgroup \n hostgroup", :default_value => default, :override=>true)
+      key    = PuppetclassLookupKey.create!(:key => "dns", :path => "environment,hostgroup\nhostgroup\nfqdn", :default_value => default, :override=>true)
       value1 = LookupValue.create!(:value => "v1", :match => "environment=testing,hostgroup=Common", :lookup_key => key)
       value2 = LookupValue.create!(:value => "v2", :match => "hostgroup=Unusual", :lookup_key => key)
 
@@ -328,16 +328,6 @@ EOF
                             :default_value => [], :puppetclass => puppetclasses(:one))
     refute_valid key
     assert_equal key.errors[:avoid_duplicates].first, _("can only be set for arrays that have merge_overrides set to true")
-  end
-
-  test "should detect erb" do
-    key = FactoryGirl.build(:puppetclass_lookup_key)
-    assert key.contains_erb?('<% object_id %>')
-    assert key.contains_erb?('<%= object_id %>')
-    assert key.contains_erb?('[<% object_id %>, <% self %>]')
-    refute key.contains_erb?('[1,2,3]')
-    refute key.contains_erb?('{a: "b"}')
-    refute key.contains_erb?('plain value')
   end
 
   test "array key is valid even with string value containing erb" do

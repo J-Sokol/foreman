@@ -50,10 +50,10 @@ class Operatingsystem < ActiveRecord::Base
   scoped_search :on => :type,        :complete_value => :true, :rename => "family"
   scoped_search :on => :title,       :complete_value => :true
 
-  scoped_search :in => :architectures,    :on => :name,  :complete_value => :true, :rename => "architecture", :only_explicit => true
-  scoped_search :in => :media,            :on => :name,  :complete_value => :true, :rename => "medium", :only_explicit => true
-  scoped_search :in => :provisioning_templates, :on => :name, :complete_value => :true, :rename => "template", :only_explicit => true
-  scoped_search :in => :os_parameters, :on => :value, :on_key=> :name, :complete_value => true, :rename => :params, :only_explicit => true
+  scoped_search :relation => :architectures,    :on => :name,  :complete_value => :true, :rename => "architecture", :only_explicit => true
+  scoped_search :relation => :media,            :on => :name,  :complete_value => :true, :rename => "medium", :only_explicit => true
+  scoped_search :relation => :provisioning_templates, :on => :name, :complete_value => :true, :rename => "template", :only_explicit => true
+  scoped_search :relation => :os_parameters, :on => :value, :on_key=> :name, :complete_value => true, :rename => :params, :only_explicit => true
 
   FAMILIES = { 'Debian'    => %r{Debian|Ubuntu}i,
                'Redhat'    => %r{RedHat|Centos|Fedora|Scientific|SLC|OracleLinux}i,
@@ -72,6 +72,20 @@ class Operatingsystem < ActiveRecord::Base
 
   class Jail < Safemode::Jail
     allow :name, :media_url, :major, :minor, :family, :to_s, :repos, :==, :release_name, :kernel, :initrd, :pxe_type, :medium_uri, :boot_files_uri, :password_hash
+  end
+
+  def self.inherited(child)
+    child.instance_eval do
+      # Ensure all subclasses behave in the same way as the parent, and remain
+      # identified as Operatingsystems instead of subclasses in UI paths etc.
+      #
+      # rubocop:disable Rails/Delegate
+      def model_name
+        superclass.model_name
+      end
+      # rubocop:enable Rails/Delegate
+    end
+    super
   end
 
   # As Rails loads an object it casts it to the class in the 'type' field. If we ensure that the type and
@@ -156,7 +170,7 @@ class Operatingsystem < ActiveRecord::Base
   end
 
   def self.find_by_to_label(str)
-    os = self.find_by_description(str)
+    os = self.find_by_description(str.to_s)
     return os if os
     a = str.split(" ")
     b = a[1].split('.') if a[1]
@@ -268,7 +282,7 @@ class Operatingsystem < ActiveRecord::Base
   end
 
   def downcase_release_name
-    self.release_name.downcase! unless Foreman.in_rake? || release_name.nil? || release_name.empty?
+    self.release_name = release_name.downcase if release_name.present?
   end
 
   def reject_empty_provisioning_template(attributes)

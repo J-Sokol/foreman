@@ -18,11 +18,134 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
     assert_kind_of ProxyAPI::Puppet, klass.send(:proxy)
   end
 
-  test "should contain only the specified environment in changes" do
-    proxy = smart_proxies(:puppetmaster)
-    importer = PuppetClassImporter.new(:url => proxy.url, :env => 'foreman-testing')
-    assert importer.changes['new'].include?('foreman-testing')
-    assert !importer.changes['new'].include?('foreman-testing-1')
+  describe '#changes' do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+    end
+
+    context 'a sepecific environment is set' do
+      test "should contain only the specified environment in changes" do
+        importer = PuppetClassImporter.new(url: @proxy.url, env: 'foreman-testing')
+        changes = importer.changes['new']
+
+        assert_includes changes, 'foreman-testing'
+        refute_includes changes, 'foreman-testing-1'
+      end
+    end
+
+    context 'has ignored environments' do
+      test 'it returns them' do
+        importer = PuppetClassImporter.new(url: @proxy.url)
+        importer.stubs(:ignored_environments).returns(['ignored-env'])
+
+        assert_not_nil importer.changes['ignored']
+        assert_not_nil importer.changes['ignored']['ignored-env']
+      end
+    end
+  end
+
+  describe "#changes_for_environment" do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+    end
+
+    test 'it calls for new, updated, obsolete and ignored classes' do
+      importer = PuppetClassImporter.new(url: @proxy.url)
+      environment_name = 'foreman-testing'
+      changes = { 'new' => { }, 'obsolete' => { }, 'updated' => { }, 'ignored' => { } }
+
+      importer.expects(:updated_classes_for).with(environment_name).once.returns({})
+      importer.expects(:new_classes_for).with(environment_name).once.returns({})
+      importer.expects(:removed_classes_for).with(environment_name).once.returns({})
+      importer.expects(:ignored_classes_for).with(environment_name).once.returns({})
+
+      importer.changes_for_environment(environment_name, changes)
+    end
+  end
+
+  describe '#ignored_classes_for' do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+      classes = {
+        'ignored-class' => {},
+        'not-ignored-class' => {}
+      }
+      @proxy_api = ProxyAPI::Puppet.new(:url => @proxy.url)
+      @proxy_api.stubs(:classes).returns(classes)
+      @importer = PuppetClassImporter.new(proxy: @proxy_api)
+      @environment = 'foreman-testing'
+    end
+
+    test 'returns an array of classes' do
+      @importer.stubs(:ignored_classes).returns([Regexp.new(/^ignored-class$/)])
+      assert_equal ['ignored-class'], @importer.ignored_classes_for(@environment)
+    end
+
+    context 'has ignored environments' do
+      test 'it returns them' do
+        importer = PuppetClassImporter.new(url: @proxy.url)
+        importer.stubs(:ignored_environments).returns(['ignored-env'])
+
+        assert_not_nil importer.changes['ignored']
+        assert_not_nil importer.changes['ignored']['ignored-env']
+      end
+    end
+  end
+
+  describe "#changes_for_environment" do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+    end
+
+    test 'it calls for new, updated, obsolete and ignored classes' do
+      importer = PuppetClassImporter.new(url: @proxy.url)
+      environment_name = 'foreman-testing'
+      changes = { 'new' => { }, 'obsolete' => { }, 'updated' => { }, 'ignored' => { } }
+
+      importer.expects(:updated_classes_for).with(environment_name).once.returns({})
+      importer.expects(:new_classes_for).with(environment_name).once.returns({})
+      importer.expects(:removed_classes_for).with(environment_name).once.returns({})
+      importer.expects(:ignored_classes_for).with(environment_name).once.returns({})
+
+      importer.changes_for_environment(environment_name, changes)
+    end
+  end
+
+  describe '#ignored_classes_for' do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+      classes = {
+        'ignored-class' => {},
+        'not-ignored-class' => {}
+      }
+      @proxy_api = ProxyAPI::Puppet.new(:url => @proxy.url)
+      @proxy_api.stubs(:classes).returns(classes)
+      @importer = PuppetClassImporter.new(proxy: @proxy_api)
+      @environment = 'foreman-testing'
+    end
+
+    test 'returns an array of classes' do
+      @importer.stubs(:ignored_classes).returns([Regexp.new(/^ignored-class$/)])
+      assert_equal ['ignored-class'], @importer.ignored_classes_for(@environment)
+    end
+  end
+
+  describe '#ignored_boolean_environment_names?' do
+    setup do
+      @proxy = smart_proxies(:puppetmaster)
+      @proxy_api = ProxyAPI::Puppet.new(:url => @proxy.url)
+      @importer = PuppetClassImporter.new(proxy: @proxy_api)
+    end
+
+    test 'is true when an environment name is resulting in "true"' do
+      @importer.stubs(:ignored_environments).returns([true, 'test', 'another'])
+      assert @importer.ignored_boolean_environment_names?
+    end
+
+    test 'is true when an environment name is resulting in "false"' do
+      @importer.stubs(:ignored_environments).returns([false, 'test'])
+      assert @importer.ignored_boolean_environment_names?
+    end
   end
 
   test "should return list of envs" do
@@ -89,7 +212,7 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
       get_an_instance.send(:update_classes_in_foreman, @envs.first.name,
                            {@pc.name => {'obsolete' => [lks.first.key]}})
       assert_equal [@envs.last], lks.first.environments
-      assert_equal @envs, lks.last.environments
+      assert_equal @envs.to_a.sort, lks.last.environments.to_a.sort
     end
 
     test 'when overridden' do
@@ -97,7 +220,7 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
       get_an_instance.send(:update_classes_in_foreman, @envs.first.name,
                            {@pc.name => {'obsolete' => [lks.first.key]}})
       assert_equal [@envs.last], lks.first.environments
-      assert_equal @envs, lks.last.environments
+      assert_equal @envs.to_a.sort, lks.last.environments.sort
     end
 
     test 'deletes the key from all environments' do
@@ -109,7 +232,7 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
                            {@pc.name => {'obsolete' => [lks.first.key]}})
       refute PuppetclassLookupKey.find_by_id(lks.first.id)
       refute LookupValue.find_by_id(lval.id)
-      assert_equal @envs, lks.last.environments
+      assert_equal @envs.to_a.sort, lks.last.environments.to_a.sort
     end
   end
 

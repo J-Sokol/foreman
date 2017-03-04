@@ -65,7 +65,7 @@ class Api::V2::LocationsControllerTest < ActionController::TestCase
   end
 
   test "should destroy location if hosts do not use it" do
-    assert_difference('Location.count', -1) do
+    assert_difference('Location.unscoped.count', -1) do
       delete :destroy, { :id => taxonomies(:location2).to_param }
     end
     assert_response :success
@@ -86,7 +86,7 @@ class Api::V2::LocationsControllerTest < ActionController::TestCase
 
   test "should dissociate hosts from the destroyed location" do
     host = FactoryGirl.create(:host, :location => taxonomies(:location1))
-    assert_difference('Location.count', -1) do
+    assert_difference('Location.unscoped.count', -1) do
       delete :destroy, { :id => taxonomies(:location1).to_param }
     end
     assert_response :success
@@ -95,11 +95,20 @@ class Api::V2::LocationsControllerTest < ActionController::TestCase
 
   test "should update *_ids. test for domain_ids" do
     # ignore all but Domain
-    @location.ignore_types = ["Hostgroup", "Environment", "User", "Medium", "Subnet", "SmartProxy", "ProvisioningTemplate", "ComputeResource", "Realm"]
+    @location.ignore_types = ["Hostgroup", "Environment", "User", "Medium",
+                              "Subnet", "SmartProxy", "ProvisioningTemplate",
+                              "ComputeResource", "Realm"]
     as_admin do
       @location.save(:validate => false)
       assert_difference('@location.domains.count', 2) do
-        put :update, { :id => @location.to_param, :location => { :domain_ids => Domain.pluck(:id) } }
+        put :update, {
+          :id => @location.to_param,
+          :location => { :domain_ids => Domain.unscoped.pluck(:id) }
+        }
+        User.current = users(:admin)
+        # as_admin gets invalidated after the call, so we need to restore it
+        # in order to make the call to @location.domains.count  in the right
+        # context
       end
     end
     assert_response :success
@@ -287,5 +296,42 @@ class Api::V2::LocationsControllerTest < ActionController::TestCase
     location_with_parameter = FactoryGirl.create(:location, :with_parameter)
     get :show, {:id => location_with_parameter.to_param, :format => 'json'}
     assert_not_empty JSON.parse(response.body)['parameters']
+  end
+
+  context 'hidden parameters' do
+    test "should show a location parameter as hidden unless show_hidden_parameters is true" do
+      location = FactoryGirl.create(:location)
+      location.location_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => location.id }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal '*****', show_response['parameters'].first['value']
+    end
+
+    test "should show a location parameter as unhidden when show_hidden_parameters is true" do
+      location = FactoryGirl.create(:location)
+      location.location_parameters.create!(:name => "foo", :value => "bar", :hidden_value => true)
+      get :show, { :id => location.id, :show_hidden_parameters => 'true' }
+      show_response = ActiveSupport::JSON.decode(@response.body)
+      assert_equal 'bar', show_response['parameters'].first['value']
+    end
+  end
+
+  test "should update existing location parameters" do
+    location = FactoryGirl.create(:location)
+    param_params = { :name => "foo", :value => "bar" }
+    location.location_parameters.create!(param_params)
+    put :update, { :id => location.id, :location => { :location_parameters_attributes => [{ :name => param_params[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert param_params[:name], location.parameters[param_params[:name]]
+  end
+
+  test "should delete existing location parameters" do
+    location = FactoryGirl.create(:location)
+    param_1 = { :name => "foo", :value => "bar" }
+    param_2 = { :name => "boo", :value => "test" }
+    location.location_parameters.create!([param_1, param_2])
+    put :update, { :id => location.id, :location => { :location_parameters_attributes => [{ :name => param_1[:name], :value => "new_value" }] } }
+    assert_response :success
+    assert_equal 1, location.reload.location_parameters.count
   end
 end

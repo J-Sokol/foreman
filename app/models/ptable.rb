@@ -10,7 +10,7 @@ class Ptable < Template
   include ValidateOsFamily
 
   audited
-  has_many :audits, :as => :auditable, :class_name => Audited.audit_class.name
+  has_many :audits, :as => :auditable, :class_name => 'Audited::Audit'
 
   before_destroy EnsureNotUsedBy.new(:hosts, :hostgroups)
   has_many_hosts
@@ -32,6 +32,8 @@ class Ptable < Template
   scoped_search :on => :os_family, :rename => 'family', :complete_value => :true
 
   alias_attribute :layout, :template
+
+  attr_exportable :os_family
 
   # with proc support, default_scope can no longer be chained
   # include all default scoping here

@@ -49,8 +49,8 @@ module Host
       org = Organization.expand(Organization.current) if SETTINGS[:organizations_enabled]
       loc = Location.expand(Location.current) if SETTINGS[:locations_enabled]
       conditions = {}
-      conditions[:organization_id] = Array(org).map { |o| o.subtree_ids }.flatten.uniq if org.present?
-      conditions[:location_id] = Array(loc).map { |l| l.subtree_ids }.flatten.uniq if loc.present?
+      conditions[:organization_id] = Array(org).map { |o| o.subtree_ids }.flatten.uniq unless org.nil?
+      conditions[:location_id] = Array(loc).map { |l| l.subtree_ids }.flatten.uniq unless loc.nil?
       conditions
     end
 
@@ -112,13 +112,13 @@ module Host
 
     # expect a facts hash
     def import_facts(facts)
-      return false unless create_new_host_when_facts_are_uploaded?
+      return false if !create_new_host_when_facts_are_uploaded? && new_record?
 
       # we are not importing facts for hosts in build state (e.g. waiting for a re-installation)
       raise ::Foreman::Exception.new('Host is pending for Build') if build?
       facts = facts.with_indifferent_access
 
-      facts[:domain].try(:downcase!)
+      facts[:domain] = facts[:domain].downcase if facts[:domain].present?
 
       time = facts[:_timestamp]
       time = time.to_time if time.is_a?(String)
@@ -154,7 +154,6 @@ module Host
       build_required_interfaces(:managed => false)
       set_non_empty_values(parser, attributes_to_import_from_facts)
       set_interfaces(parser) if parser.parse_interfaces?
-
       parser
     end
 
@@ -216,7 +215,7 @@ module Host
         taxonomy_fact = Setting["#{taxonomy}_fact"]
 
         if taxonomy_fact.present? && facts.keys.include?(taxonomy_fact)
-          taxonomy_from_fact = taxonomy_class.find_by_title(facts[taxonomy_fact])
+          taxonomy_from_fact = taxonomy_class.find_by_title(facts[taxonomy_fact].to_s)
         else
           default_taxonomy = taxonomy_class.find_by_title(Setting["default_#{taxonomy}"])
         end
@@ -413,6 +412,12 @@ module Host
       iface.mac = attributes.delete(:macaddress)
       iface.ip = attributes.delete(:ipaddress)
       iface.ip6 = attributes.delete(:ipaddress6)
+
+      if Setting[:update_subnets_from_facts]
+        iface.subnet = Subnet.subnet_for(iface.ip) if iface.ip_changed? && !iface.matches_subnet?(:ip, :subnet)
+        iface.subnet6 = Subnet.subnet_for(iface.ip6) if iface.ip6_changed? && !iface.matches_subnet?(:ip6, :subnet6)
+      end
+
       iface.virtual = attributes.delete(:virtual) || false
       iface.tag = attributes.delete(:tag) || ''
       iface.attached_to = attributes.delete(:attached_to) if attributes[:attached_to].present?
